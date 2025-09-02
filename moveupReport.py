@@ -1,3 +1,5 @@
+##Konrad Kubica github test upload 9.2.2025
+
 import pandas as pd
 import os
 from tkinter import Tk, filedialog, messagebox
