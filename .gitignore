@@ -1,0 +1,23 @@
+# Python / env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv
+venv/
+env/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Build / dist
+build/
+dist/
+*.log
+# *.spec      # keep ignored, or comment out to track a specific spec
