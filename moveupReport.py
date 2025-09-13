@@ -1,7 +1,7 @@
 """
-Move-Up Inventory Tool — v2 (with CLI flags)
+Move-Up Inventory Tool — v2.1 (with CLI flags)
 Author: Konrad Kubica (+ ChatGPT)
-Date: 2025-09-03
+Date: 2025-09-13
 
 This file contains two parts:
 1) The Python script (fully runnable)
@@ -11,6 +11,7 @@ To run: python moveup.py [flags]
 """
 
 import os
+import re
 import sys
 import argparse
 from datetime import datetime
@@ -24,10 +25,21 @@ from reportlab.lib import colors
 
 # --- CONSTANTS ---
 COLUMNS_TO_USE = ["Type", "Brand", "Product Name", "Package Barcode", "Room", "Qty On Hand"]
-# PDF drops Brand (kept in Excel), but we keep a six-length list for column widths consistency
-COLUMN_WIDTHS = [45, 370, 50, 45, 25, 30]
+# PDF renders 5 columns (Brand hidden). Widths MUST match the rendered columns.
+COLUMN_WIDTHS = [50, 365, 70, 45, 35]  # Type, Product, Barcode, Loc, Qty
 BASE_PDF_FILENAME = "Print_me_Filtered_Move_Up"
 DATE_FORMAT = "%B %d, %Y"
+
+
+# --- HELPERS ---
+def sanitize_prefix(pfx: str) -> str:
+    """Make prefix safe for filenames (Windows-safe)."""
+    if not pfx:
+        return pfx
+    pfx = pfx.strip()
+    pfx = re.sub(r'[\\/:*?"<>|]+', "_", pfx)  # Replace invalid characters with underscores
+    pfx = re.sub(r"\s+", "_", pfx)            # Collapse whitespace to single underscores
+    return pfx
 
 
 # --- UI HELPERS ---
@@ -49,8 +61,8 @@ def filter_inventory(original_file, sheet_name, candidate_rooms, lowstock_thresh
             original_file,
             sheet_name=sheet_name,
             usecols=COLUMNS_TO_USE,
-            converters={"Package Barcode": lambda x: "" if pd.isna(x) else str(x)}
-        )
+            dtype={"Package Barcode": "string"}
+        ).fillna({"Package Barcode": ""})
     except ValueError:
         # Fallback if sheet name varies: read first sheet
         try:
@@ -58,17 +70,27 @@ def filter_inventory(original_file, sheet_name, candidate_rooms, lowstock_thresh
                 original_file,
                 sheet_name=0,
                 usecols=COLUMNS_TO_USE,
-                converters={"Package Barcode": lambda x: "" if pd.isna(x) else str(x)}
-            )
+                dtype={"Package Barcode": "string"}
+            ).fillna({"Package Barcode": ""})
         except Exception as e:
-            messagebox.showerror("Error", f"Could not read Excel file:\n{e}")
+            try:
+                messagebox.showerror("Error", f"Could not read Excel file:\n{e}")
+            except Exception:
+                print(f"Could not read Excel file:\n{e}")
             return None, None, None
     except Exception as e:
-        messagebox.showerror("Error", f"Could not read Excel file:\n{e}")
+        try:
+            messagebox.showerror("Error", f"Could not read Excel file:\n{e}")
+        except Exception:
+            print(f"Could not read Excel file:\n{e}")
         return None, None, None
 
     # Clean essential fields
     df = df.dropna(subset=["Product Name", "Brand", "Package Barcode", "Room"])
+
+    # Ensure Qty is numeric (coerce texty values to 0)
+    if "Qty On Hand" in df.columns:
+        df["Qty On Hand"] = pd.to_numeric(df["Qty On Hand"], errors="coerce").fillna(0).astype(int)
 
     # 🚫 Always remove accessories (broad match on Type; case-insensitive)
     # Matches: "Accessory", "Accessories", "Accessory Item", "Accessory - X", "ACCeSSorY/Parts", etc.
@@ -134,7 +156,9 @@ def build_pdf_section(df, title):
     pdf_df["Type"] = pdf_df["Type"].astype(str).str.slice(0, 8).where(pdf_df["Type"].notna(), "")
     pdf_df["Product Name"] = pdf_df["Product Name"].astype(str).apply(lambda x: x if len(x) <= 75 else x[:72] + "...")
     # show last 6 of barcode; handle empty strings
-    pdf_df["Package Barcode"] = pdf_df["Package Barcode"].apply(lambda x: str(x)[-6:] if pd.notna(x) and str(x) else "")
+    pdf_df["Package Barcode"] = pdf_df["Package Barcode"].apply(
+        lambda x: str(x)[-6:] if pd.notna(x) and str(x) else ""
+    )
 
     # Reorder & drop Brand (PDF only)
     pdf_df = pdf_df[["Type", "Product Name", "Package Barcode", "Room", "Qty On Hand"]]
@@ -173,6 +197,7 @@ def generate_pdf(move_up_df, low_stock_df, source_path, include_lowstock, timest
     pdf_filename = "_".join(parts) + ".pdf"
 
     if prefix:
+        prefix = sanitize_prefix(prefix)
         pdf_filename = f"{prefix}_{pdf_filename}"
 
     output_path = os.path.join(base_path, pdf_filename)
@@ -211,6 +236,7 @@ def save_filtered_excel(move_up_df, low_stock_df, original_path, timestamp, pref
     output_filename = "_".join(parts) + ".xlsx"
 
     if prefix:
+        prefix = sanitize_prefix(prefix)
         output_filename = f"{prefix}_{output_filename}"
 
     output_path = os.path.join(base_dir, output_filename)
@@ -250,6 +276,7 @@ def parse_args():
     parser.add_argument("--open", dest="auto_open", action="store_true", help="Auto-open PDF after generation (default on Windows).")
     parser.add_argument("--no-open", dest="auto_open", action="store_false", help="Do not auto-open the PDF.")
     parser.set_defaults(auto_open=default_auto_open)
+    parser.add_argument("--quiet", action="store_true", help="Suppress GUI popups; print output paths to stdout only.")
 
     return parser.parse_args()
 
@@ -290,103 +317,18 @@ def main():
         )
         outputs.append(pdf_output)
 
-    # Friendly popup if running interactively and Tk is available
-    try:
-        message = "Files created successfully:\n\n" + "\n".join(os.path.basename(p) for p in outputs)
-        messagebox.showinfo("Done", message)
-    except Exception:
-        # Fallback to console output if Tk not available (e.g., headless run)
+    # Friendly popup if running interactively and Tk is available (unless --quiet)
+    if not args.quiet:
+        try:
+            message = "Files created successfully:\n\n" + "\n".join(os.path.basename(p) for p in outputs)
+            messagebox.showinfo("Done", message)
+        except Exception:
+            for p in outputs:
+                print(p)
+    else:
         for p in outputs:
             print(p)
 
 
 if __name__ == "__main__":
     main()
-
-
-# ==========================
-# README — Usage & Examples
-# ==========================
-"""
-README — Move-Up Inventory Tool (v2)
-
-Overview
---------
-This tool scans your inventory export, finds items in specified back rooms (Incoming Deliveries / Vault / Overstock by default)
-that are **not** on the Sales Floor (matched by Brand + Product Name), and outputs:
-
-- Excel workbook with two tabs:
-  - Move_Up_Items (primary working list)
-  - Vault_Low_Stock (Vault items under the threshold; reference only)
-- PDF report of the Move-Up list (optionally also includes Vault Low Stock)
-
-Highlights
----------
-- Fast vectorized filters (no Python loops)
-- Timestamped filenames by default
-- Command-line flags to customize behavior
-- Still works with a GUI file picker if you don’t pass --input
-
-Install Requirements
---------------------
-python -m pip install pandas openpyxl reportlab
-
-Basic Usage
------------
-1) Double-click the script (Windows) or run without flags:
-   - You’ll be prompted to pick an Excel file (sheet "Inventory Adjustments" by default).
-   - Outputs timestamped Excel + PDF next to the source file.
-
-2) From terminal, with explicit input:
-   python moveup.py --input "C:\\path\\to\\inventory.xlsx"
-
-Key Flags / Toggles
--------------------
-Input / Sheet
-- --input, -i <path>           : Path to the Excel file. If omitted, a file picker opens.
-- --sheet <name>               : Sheet name to read (default: "Inventory Adjustments").
-
-Outputs
-- --no-pdf                     : Skip generating the PDF.
-- --no-excel                   : Skip generating the Excel output.
-- --pdf-include-lowstock       : Include a second section in the PDF for Vault Low Stock.
-
-Naming
-- --timestamp / --no-timestamp : Add or remove timestamp in filenames (default: timestamp on).
-- --prefix <text>              : Prefix filenames (e.g., "BisaLina" → BisaLina_Filtered_Move_Up_YYYY-MM-DD_HH-MM.pdf).
-
-Filtering
-- --rooms <list>               : Candidate rooms to check (default: Incoming Deliveries Vault Overstock).
-- --lowstock-threshold <N>     : Vault low-stock cutoff (default: 5).
-
-Behavior
-- --open / --no-open           : Auto-open the generated PDF (default: on in Windows; off elsewhere).
-
-Examples
---------
-1) Include low-stock in PDF and add a site prefix:
-   python moveup.py -i inventory.xlsx --pdf-include-lowstock --prefix EarthMed
-
-2) Excel only (no PDF), restrict to Vault + Overstock:
-   python moveup.py -i inventory.xlsx --no-pdf --rooms Vault Overstock
-
-3) Raise the Vault low-stock threshold to 10:
-   python moveup.py -i inventory.xlsx --pdf-include-lowstock --lowstock-threshold 10
-
-4) Produce fixed filenames (no timestamp) and don’t auto-open:
-   python moveup.py -i inventory.xlsx --no-timestamp --no-open
-
-Output Files
-------------
-- <basename>_Filtered_Move_Up_YYYY-MM-DD_HH-MM.xlsx
-- Filtered_Move_Up_YYYY-MM-DD_HH-MM.pdf (or with your --prefix)
-
-Notes
------
-- Barcodes are treated as strings and the PDF shows the **last 6** characters.
-- Brand is hidden in the PDF for compact layout but remains in Excel.
-- If your source sheet name changes, pass --sheet <name>.
-- If you exclude "Vault" from --rooms, the Low Stock tab/section simply ends up empty.
-
-"""
- #command to build app  pyinstaller --onefile --noconsole --name "MoveUp-Inventory V1.1" --icon ihjicon.ico moveupReport.py
