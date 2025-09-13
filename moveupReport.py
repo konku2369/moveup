@@ -26,7 +26,7 @@ from reportlab.lib import colors
 COLUMNS_TO_USE = ["Type", "Brand", "Product Name", "Package Barcode", "Room", "Qty On Hand"]
 # PDF drops Brand (kept in Excel), but we keep a six-length list for column widths consistency
 COLUMN_WIDTHS = [45, 370, 50, 45, 25, 30]
-BASE_PDF_FILENAME = "Filtered_Move_Up"
+BASE_PDF_FILENAME = "Print_me_Filtered_Move_Up"
 DATE_FORMAT = "%B %d, %Y"
 
 
@@ -69,6 +69,13 @@ def filter_inventory(original_file, sheet_name, candidate_rooms, lowstock_thresh
 
     # Clean essential fields
     df = df.dropna(subset=["Product Name", "Brand", "Package Barcode", "Room"])
+
+    # 🚫 Always remove accessories (broad match on Type; case-insensitive)
+    # Matches: "Accessory", "Accessories", "Accessory Item", "Accessory - X", "ACCeSSorY/Parts", etc.
+    if "Type" in df.columns:
+        # Normalize to string, trim, then drop any row whose Type contains "accessor"
+        mask_accessory = df["Type"].astype(str).str.strip().str.contains(r"accessor", case=False, na=False)
+        df = df.loc[~mask_accessory].copy()
 
     # Optional: categories for faster sorts on big data
     for col in ("Type", "Room"):
@@ -159,13 +166,15 @@ def build_pdf_section(df, title):
 def generate_pdf(move_up_df, low_stock_df, source_path, include_lowstock, timestamp, prefix, auto_open):
     base_path = os.path.dirname(source_path) if source_path else os.getcwd()
 
-    parts = []
-    if prefix:
-        parts.append(prefix)
-    parts.append(BASE_PDF_FILENAME)
+    parts = [BASE_PDF_FILENAME]
     if timestamp:
         parts.append(datetime.now().strftime("%Y-%m-%d_%H-%M"))
+
     pdf_filename = "_".join(parts) + ".pdf"
+
+    if prefix:
+        pdf_filename = f"{prefix}_{pdf_filename}"
+
     output_path = os.path.join(base_path, pdf_filename)
 
     doc = SimpleDocTemplate(output_path, pagesize=letter)
@@ -195,15 +204,15 @@ def generate_pdf(move_up_df, low_stock_df, source_path, include_lowstock, timest
 # --- EXCEL OUTPUT ---
 def save_filtered_excel(move_up_df, low_stock_df, original_path, timestamp, prefix):
     base_dir = os.path.dirname(original_path) if original_path else os.getcwd()
-    base_name = os.path.splitext(os.path.basename(original_path))[0] if original_path else "Inventory"
-
-    parts = []
-    if prefix:
-        parts.append(prefix)
-    parts.append(base_name + "_Filtered_Move_Up")
+    parts = ["Sticker_Sheet_Filtered_Move_Up"]
     if timestamp:
         parts.append(datetime.now().strftime("%Y-%m-%d_%H-%M"))
+
     output_filename = "_".join(parts) + ".xlsx"
+
+    if prefix:
+        output_filename = f"{prefix}_{output_filename}"
+
     output_path = os.path.join(base_dir, output_filename)
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
