@@ -4,6 +4,9 @@ Move‑Up Live v3.7.0 — Lite (No History + Presets + Toggle Remove + Rooms Mul
 Author: Konrad Kubica (+ ChatGPT)
 Date: 2025‑09‑XX
 
+build with:
+pyinstaller --onefile --noconsole --name "MoveUp Live 3.7.0"  moveup_live_v3_7_0_lite.py
+
 Highlights
 - No history (simple & predictable).
 - Presets: save/load/delete Rooms, Brands, Low-Stock, flags (shared at ~/.moveup_live/presets.json).
