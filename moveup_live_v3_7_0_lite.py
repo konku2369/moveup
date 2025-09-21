@@ -2,7 +2,7 @@
 """
 Move‑Up Live v3.7.0 — Lite (No History + Presets + Toggle Remove + Rooms Multi‑Select)
 Author: Konrad Kubica (+ ChatGPT)
-Date: 2025‑09‑21
+Date: 2025‑09‑XX
 
 Highlights
 - No history (simple & predictable).
