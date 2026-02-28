@@ -196,7 +196,7 @@ class KawaiiPreviewDialog:
         c.create_oval(cx - center_r, cy - center_r, cx + center_r, cy + center_r, outline=line_col, width=3)
 
         # stars: random spread, count increases linearly with element intensity
-        stars = int(prof.get("stars_count", 12))
+        stars = int(prof.get("stars_count", 10))
         rng = random.Random(1337)  # fixed seed so it doesn’t flicker while sliding
         for _ in range(stars):
             x = rng.randint(int(w * 0.08), int(w * 0.92))
@@ -204,12 +204,36 @@ class KawaiiPreviewDialog:
             r = rng.randint(6, 14)
             self._star(c, x, y, r, sparkle_col)
 
+        # corner daisies: count scales with element intensity (same pool order as PDF)
+        daisy_count = int(prof.get("daisy_count", 6))
+        daisy_positions = [
+            (w * 0.11, h * 0.86, 0.95),
+            (w * 0.89, h * 0.86, 0.95),
+            (w * 0.12, h * 0.18, 0.85),
+            (w * 0.88, h * 0.18, 0.85),
+            (w * 0.16, h * 0.83, 0.70),
+            (w * 0.84, h * 0.83, 0.70),
+            (w * 0.05, h * 0.52, 0.75),
+            (w * 0.95, h * 0.52, 0.75),
+            (w * 0.22, h * 0.50, 0.55),
+            (w * 0.78, h * 0.50, 0.55),
+        ]
+        d_r = int(min(w, h) * 0.025)  # small fixed radius for corner daisies
+        for dx, dy, _ in daisy_positions[:daisy_count]:
+            self._daisy(c, int(dx), int(dy), d_r, line_col)
+
         mode = "B/W" if prof["printer_bw"] else "Color"
+        paw_count = int(prof.get("paw_count", 4))
+        preset_name = prof.get("preset", "")
+        bg_hue = prof.get("bg_hue_pct", 0)
+        bg_int = prof.get("bg_intensity_pct", 100)
+        el_int = prof.get("elem_intensity_pct", 100)
         self.readout.set(
-            f"Mode: {mode} | Preset: {prof['preset']} | Hue: {prof['bg_hue_pct']}% Purple | "
-            f"BG: {prof['bg_intensity_pct']}% | Elem: {prof['elem_intensity_pct']}%\n"
-            f"Effective α tint/stroke/sparkle/border: "
-            f"{tint_a:.3f}/{stroke_a:.3f}/{sparkle_a:.3f}/{border_a:.3f} | Stars: {stars}"
+            f"Mode: {mode} | Preset: {preset_name} | Hue: {bg_hue}% Purple | "
+            f"BG: {bg_int}% | Elem: {el_int}%\n"
+            f"Effective a tint/stroke/sparkle/border: "
+            f"{tint_a:.3f}/{stroke_a:.3f}/{sparkle_a:.3f}/{border_a:.3f} | "
+            f"Stars: {stars} | Daisies: {daisy_count} | Paws: {paw_count}"
         )
 
     @staticmethod
@@ -218,6 +242,19 @@ class KawaiiPreviewDialog:
         c.create_line(x, y - r, x, y + r, fill=color, width=3)
         c.create_line(x - int(r * 0.7), y - int(r * 0.7), x + int(r * 0.7), y + int(r * 0.7), fill=color, width=3)
         c.create_line(x - int(r * 0.7), y + int(r * 0.7), x + int(r * 0.7), y - int(r * 0.7), fill=color, width=3)
+
+    @staticmethod
+    def _daisy(c: tk.Canvas, x: int, y: int, r: int, color: str):
+        petals = 10
+        petal_r = r
+        petal_dist = int(r * 1.7)
+        for i in range(petals):
+            ang = (i / petals) * (2 * math.pi)
+            px = x + int(petal_dist * math.cos(ang))
+            py = y + int(petal_dist * math.sin(ang))
+            c.create_oval(px - petal_r, py - petal_r, px + petal_r, py + petal_r, outline=color, width=2)
+        center_r = int(r * 0.7)
+        c.create_oval(x - center_r, y - center_r, x + center_r, y + center_r, outline=color, width=2)
 
     def _on_close(self):
         # always save current state on close

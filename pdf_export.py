@@ -119,16 +119,22 @@ def _draw_random_stars(canvas, w, h, stroke_col, sparkle_alpha, count, seed):
     canvas.setStrokeColor(stroke_col)
     canvas.setLineWidth(1.0)
 
-    # Keep them away from margins and footer line
-    left = 50
-    right = w - 50
-    bottom = 60
-    top = h - 60
-
+    # Scatter only in the four narrow margin bands — keeps stars off the table content
     for _ in range(int(count)):
-        x = rng.uniform(left, right)
-        y = rng.uniform(bottom, top)
-        r = rng.uniform(4.5, 10.5)
+        band = rng.randint(0, 3)
+        if band == 0:       # bottom margin strip
+            x = rng.uniform(44, w - 44)
+            y = rng.uniform(28, 70)
+        elif band == 1:     # top margin strip
+            x = rng.uniform(44, w - 44)
+            y = rng.uniform(h - 70, h - 28)
+        elif band == 2:     # left margin strip
+            x = rng.uniform(28, 50)
+            y = rng.uniform(70, h - 70)
+        else:               # right margin strip
+            x = rng.uniform(w - 50, w - 28)
+            y = rng.uniform(70, h - 70)
+        r = rng.uniform(3.5, 8.5)
         _draw_star(canvas, x, y, r)
 
     canvas.restoreState()
@@ -195,7 +201,9 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     stroke_a = float(prof.get("stroke_alpha", 0.08))
     sparkle_a = float(prof.get("sparkle_alpha", 0.06))
     border_a = float(prof.get("border_alpha", 0.09))
-    stars_count = int(prof.get("stars_count", 5))
+    stars_count = int(prof.get("stars_count", 10))
+    daisy_count = int(prof.get("daisy_count", 6))
+    paw_count = int(prof.get("paw_count", 4))
 
     sr, sg, sb = prof.get("stroke_rgb", (0.55, 0.40, 0.50))
     stroke_col = Color(float(sr), float(sg), float(sb))
@@ -214,8 +222,8 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     margin = 26
     canvas.rect(margin, margin + 18, w - 2 * margin, h - (2 * margin + 34), stroke=1, fill=0)
 
-    # --- Big watermark daisy ---
-    cx, cy = w * 0.62, h * 0.60
+    # --- Big corner daisy (bottom-right margin, away from table content) ---
+    cx, cy = w * 0.84, h * 0.11
     canvas.saveState()
     _set_alpha(canvas, stroke_a)
     canvas.setStrokeColor(stroke_col)
@@ -244,12 +252,13 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     canvas.setStrokeColor(stroke_col)
     canvas.setLineWidth(1.0)
 
+    # Fixed sparkle points — all in outer margin bands, never over table content
     sparkle_points = [
-        (w * 0.14, h * 0.78, 9),
-        (w * 0.22, h * 0.26, 7),
-        (w * 0.86, h * 0.80, 8),
-        (w * 0.80, h * 0.24, 7),
-        (w * 0.48, h * 0.88, 6),
+        (w * 0.14, h * 0.07, 9),   # bottom-left margin
+        (w * 0.86, h * 0.07, 8),   # bottom-right margin
+        (w * 0.08, h * 0.50, 7),   # mid-left margin
+        (w * 0.92, h * 0.50, 7),   # mid-right margin
+        (w * 0.50, h * 0.05, 6),   # bottom-center margin
     ]
     for x, y, r in sparkle_points:
         _draw_star(canvas, x, y, r)
@@ -258,25 +267,34 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     if stars_count > 0:
         _draw_random_stars(canvas, w, h, stroke_col, sparkle_a, stars_count, seed=42)
 
-    # --- Daisies & paws ---
+    # --- Daisies & paws (pool ordered so first entries are drawn at lower intensity) ---
+    # All positions placed in outer margin bands — never over the table content area
     daisy_positions = [
-        (w * 0.11, h * 0.86, 0.95),
-        (w * 0.16, h * 0.83, 0.70),
-        (w * 0.89, h * 0.86, 0.95),
-        (w * 0.84, h * 0.83, 0.70),
-        (w * 0.12, h * 0.18, 0.85),
-        (w * 0.88, h * 0.18, 0.85),
+        (w * 0.05, h * 0.12, 0.95),   # 1 – bottom-left corner
+        (w * 0.95, h * 0.12, 0.95),   # 2 – bottom-right corner
+        (w * 0.04, h * 0.88, 0.85),   # 3 – top-left corner
+        (w * 0.96, h * 0.88, 0.85),   # 4 – top-right corner
+        (w * 0.50, h * 0.06, 0.75),   # 5 – bottom-center
+        (w * 0.50, h * 0.94, 0.75),   # 6 – top-center
+        (w * 0.04, h * 0.50, 0.75),   # 7 – mid-left edge
+        (w * 0.96, h * 0.50, 0.75),   # 8 – mid-right edge
+        (w * 0.04, h * 0.33, 0.60),   # 9 – lower-mid-left edge
+        (w * 0.96, h * 0.33, 0.60),   # 10 – lower-mid-right edge
     ]
-    for x, y, s in daisy_positions:
+    for x, y, s in daisy_positions[:daisy_count]:
         _draw_daisy(canvas, x, y, s, stroke_col, stroke_a)
 
+    # All positions placed in outer margin bands — never over the table content area
     paw_positions = [
-        (w * 0.30, h * 0.82, 0.8),
-        (w * 0.72, h * 0.82, 0.8),
-        (w * 0.30, h * 0.20, 0.75),
-        (w * 0.72, h * 0.20, 0.75),
+        (w * 0.08, h * 0.10, 0.80),   # 1 – bottom-left corner
+        (w * 0.92, h * 0.10, 0.80),   # 2 – bottom-right corner
+        (w * 0.07, h * 0.88, 0.75),   # 3 – top-left corner
+        (w * 0.93, h * 0.88, 0.75),   # 4 – top-right corner
+        (w * 0.50, h * 0.04, 0.70),   # 5 – bottom-center
+        (w * 0.50, h * 0.96, 0.70),   # 6 – top-center
+        (w * 0.04, h * 0.65, 0.65),   # 7 – left side mid
     ]
-    for x, y, s in paw_positions:
+    for x, y, s in paw_positions[:paw_count]:
         _draw_paw(canvas, x, y, s, stroke_col, stroke_a)
 
     canvas.restoreState()

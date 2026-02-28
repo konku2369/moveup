@@ -35,7 +35,7 @@ PRESETS_BW: Dict[str, Dict[str, float]] = {
 # You asked for more feral: here you go.
 # -----------------------------------------
 LIMITS = {
-    "tint_alpha":    (0.0, 0.85),
+    "tint_alpha":    (0.0, 0.30),  # capped at 30% — above that washes out table text
     "stroke_alpha":  (0.0, 0.55),
     "sparkle_alpha": (0.0, 0.55),
     "border_alpha":  (0.0, 0.55),
@@ -55,13 +55,13 @@ class KawaiiSettings:
     printer_bw: bool = False
 
     # sliders in percent
-    bg_hue_pct: int = 0            # 0 = pink, 100 = purple
+    bg_hue_pct: int = 100          # 0 = pink, 100 = purple
     bg_intensity_pct: int = 100    # multiplies tint_alpha only
     elem_intensity_pct: int = 100  # multiplies stroke/sparkle/border
 
     # stars intensity: number of stars scales with element intensity
-    stars_base: int = 5
-    stars_max_extra: int = 35      # added at 200% intensity
+    stars_base: int = 10
+    stars_max_extra: int = 80      # added at 200% intensity
 
     def clamp_self(self) -> None:
         if self.preset not in PRESETS_COLOR:
@@ -167,11 +167,18 @@ def compute_effective_profile(s: KawaiiSettings) -> Dict[str, object]:
         tint_rgb = _mix_rgb(PINK_TINT_RGB, PURPLE_TINT_RGB, t)
         stroke_rgb = _mix_rgb(PINK_STROKE_RGB, PURPLE_STROKE_RGB, t)
 
-    # stars: base + linear extra, scaled by elem intensity, randomized by preview code
-    # at 100% => about half of stars_max_extra? no, make it truly linear 0..200% => 0..stars_max_extra
+    # All element counts scale linearly with elem_intensity (0–200%).
+    # At 100%: stars=base+half_extra, daisies=6, paws=4 (matching old hardcoded defaults).
     el_pct = _clamp(float(s.elem_intensity_pct), 0.0, 200.0)
-    extra = int(round((el_pct / 200.0) * float(s.stars_max_extra)))
+    t_el = el_pct / 200.0
+
+    extra = int(round(t_el * float(s.stars_max_extra)))
     stars_count = int(max(0, s.stars_base + extra))
+
+    # daisies: 2 at 0% → 6 at 100% → 10 at 200%
+    daisy_count = int(max(0, round(2 + t_el * 8)))
+    # paws:    1 at 0% → 4 at 100% → 7 at 200%
+    paw_count = int(max(0, round(1 + t_el * 6)))
 
     return {
         "tint_alpha": float(tint_alpha),
@@ -181,6 +188,8 @@ def compute_effective_profile(s: KawaiiSettings) -> Dict[str, object]:
         "tint_rgb": tint_rgb,
         "stroke_rgb": stroke_rgb,
         "stars_count": stars_count,
+        "daisy_count": daisy_count,
+        "paw_count": paw_count,
         "printer_bw": bool(s.printer_bw),
         "preset": s.preset,
         "bg_hue_pct": int(s.bg_hue_pct),

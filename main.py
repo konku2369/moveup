@@ -917,18 +917,18 @@ class MoveUpGUI:
             "kawaii_daisy",
             parent=self.base_theme,
             settings={
-                "TFrame": {"configure": {"background": "#ffe6f2"}},
-                "TLabel": {"configure": {"background": "#ffe6f2", "foreground": "#4a154b"}},
+                "TFrame": {"configure": {"background": "#ede8f7"}},
+                "TLabel": {"configure": {"background": "#ede8f7", "foreground": "#3b1f6e"}},
                 "TButton": {
-                    "configure": {"padding": 6, "relief": "raised", "background": "#ffcce5", "foreground": "#4a154b"},
-                    "map": {"background": [("active", "#ffb6d9"), ("pressed", "#ff9fcf")]}
+                    "configure": {"padding": 6, "relief": "raised", "background": "#d0c4ee", "foreground": "#3b1f6e"},
+                    "map": {"background": [("active", "#bfb0e6"), ("pressed", "#ae9cde")]}
                 },
                 "Treeview": {
-                    "configure": {"background": "#fff7fb", "fieldbackground": "#fff7fb", "foreground": "#333333",
+                    "configure": {"background": "#f5f2fb", "fieldbackground": "#f5f2fb", "foreground": "#333333",
                                   "rowheight": 20},
-                    "map": {"background": [("selected", "#ffb6d9")], "foreground": [("selected", "#000000")]}
+                    "map": {"background": [("selected", "#bfb0e6")], "foreground": [("selected", "#000000")]}
                 },
-                "TCheckbutton": {"configure": {"background": "#ffe6f2"}},
+                "TCheckbutton": {"configure": {"background": "#ede8f7"}},
             }
         )
 
