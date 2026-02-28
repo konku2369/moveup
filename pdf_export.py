@@ -13,8 +13,6 @@ from kawaii_settings import load_settings, compute_effective_profile
 import random
 import subprocess
 
-import subprocess
-
 
 def _auto_open_file(path: str):
     """Open a file with the system default application, cross-platform."""
@@ -63,23 +61,16 @@ DATE_FORMAT = "%B %d, %Y — %I:%M %p"
 # ------------------------------
 # Common helpers
 # ------------------------------
-def _pdf_profile() -> dict:
-    return PDF_PROFILE
-
-
 def _fmt_type(val: str) -> str:
-    p = _pdf_profile()
-    return ellipses(str(val or ""), int(p["type_trunc"]))
+    return ellipses(str(val or ""), int(PDF_PROFILE["type_trunc"]))
 
 
 def _fmt_product(val: str) -> str:
-    p = _pdf_profile()
-    return ellipses(str(val or ""), int(p["product_trunc"]))
+    return ellipses(str(val or ""), int(PDF_PROFILE["product_trunc"]))
 
 
 def _fmt_room(val: str) -> str:
-    p = _pdf_profile()
-    return ellipses(str(val or ""), int(p["room_trunc"]))
+    return ellipses(str(val or ""), int(PDF_PROFILE["room_trunc"]))
 
 
 def _fmt_barcode_tail(val: str, n: int) -> str:
@@ -323,7 +314,6 @@ def _prep_moveup_table_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=["Type", "Product Name", "Package Barcode", "Room", "Qty On Hand"])
 
-    p = _pdf_profile()
     pdf_df = df.loc[:, COLUMNS_TO_USE].copy()
     # Data is already sorted by the caller; no need to re-sort here.
 
@@ -331,7 +321,7 @@ def _prep_moveup_table_df(df: pd.DataFrame) -> pd.DataFrame:
     pdf_df["Type"] = pdf_df["Type"].astype(str).fillna("").map(_fmt_type)
     pdf_df["Product Name"] = pdf_df["Product Name"].astype(str).fillna("").map(_fmt_product)
     pdf_df["Package Barcode"] = pdf_df["Package Barcode"].map(
-        lambda x: _fmt_barcode_tail(x, int(p["barcode_tail_moveup"]))
+        lambda x: _fmt_barcode_tail(x, int(PDF_PROFILE["barcode_tail_moveup"]))
     )
     return pdf_df[["Type", "Product Name", "Package Barcode", "Room", "Qty On Hand"]]
 
@@ -345,9 +335,8 @@ def _build_moveup_page_elements(
     styles = getSampleStyleSheet()
     elements: List = []
 
-    p = _pdf_profile()
-    widths = p["moveup_widths"]
-    fs = int(p["font_size"])
+    widths = PDF_PROFILE["moveup_widths"]
+    fs = int(PDF_PROFILE["font_size"])
 
     elements.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
     elements.append(Paragraph(datetime.now().strftime(DATE_FORMAT), styles["Normal"]))
@@ -373,8 +362,8 @@ def _build_moveup_page_elements(
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
         ("GRID", (0, 0), (-1, -1), 0.5, grid),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), int(p["cell_padding_bottom"])),
-        ("TOPPADDING", (0, 0), (-1, -1), int(p["cell_padding_top"])),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_bottom"])),
+        ("TOPPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_top"])),
     ]))
 
     for i in range(1, len(table_data), 2):
@@ -403,9 +392,8 @@ def _build_audit_page_elements(
     styles = getSampleStyleSheet()
     elements: List = []
 
-    p = _pdf_profile()
-    widths = p["audit_widths"]
-    fs = int(p["font_size"])
+    widths = PDF_PROFILE["audit_widths"]
+    fs = int(PDF_PROFILE["font_size"])
 
     elements.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
     elements.append(Paragraph(datetime.now().strftime(DATE_FORMAT), styles["Normal"]))
@@ -436,8 +424,8 @@ def _build_audit_page_elements(
         ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
         ("GRID", (0, 0), (-1, -1), 0.5, grid),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), int(p["cell_padding_top"])),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), int(p["cell_padding_bottom"])),
+        ("TOPPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_top"])),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_bottom"])),
     ]))
 
     for i in range(1, len(table_data), 2):
@@ -604,7 +592,7 @@ def export_audit_pdfs(
     work["TypeDisp"] = work["Type"].astype(str).fillna("").map(_type_disp)
     work["ProductDisp"] = work["Product Name"].astype(str).fillna("").map(lambda v: _fmt_product(v))
     work["MetrcLast8"] = work["Package Barcode"].astype(str).fillna("").map(
-        lambda v: _fmt_barcode_tail(v, int(_pdf_profile()["metrc_tail_audit"]))
+        lambda v: _fmt_barcode_tail(v, int(PDF_PROFILE["metrc_tail_audit"]))
     )
 
     work["Qty On Hand"] = pd.to_numeric(work["Qty On Hand"], errors="coerce").fillna(0).astype(int)

@@ -1,4 +1,5 @@
 import os
+import random
 import sys
 import json
 import subprocess
@@ -357,9 +358,6 @@ class AsciiDogWidget:
     }
 
     def __init__(self, parent: tk.Widget):
-        import random
-        from datetime import datetime
-
         self.parent = parent
         self._state = "idle"
         self._after_id = None
@@ -618,8 +616,8 @@ class AsciiDogWidget:
             self._run_anim(go_frames, self.MESSAGES["treat"], int(200 * self._speed_scale),
                            lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(200 * self._speed_scale),
                                                   lambda: self._return_idle()))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[moveup] Dog widget click error: {e}")
 
     def receive_pet(self):
         if self._state != "idle":
@@ -785,8 +783,7 @@ class MoveUpGUI:
 
         self.export_root = os.path.join(self.app_dir, "generated")
         os.makedirs(self.export_root, exist_ok=True)
-        self.export_run_dir = os.path.join(self.export_root, datetime.now().strftime("%Y-%m-%d_%H-%M"))
-        os.makedirs(self.export_run_dir, exist_ok=True)
+        self._export_run_dir: Optional[str] = None  # created lazily on first export/open
 
         # Persistent filters + aliases
         self.room_alias_map: Dict[str, str] = {}
@@ -858,8 +855,8 @@ class MoveUpGUI:
             if isinstance(last_dir, str) and last_dir.strip() and os.path.isdir(last_dir):
                 self.last_import_dir = last_dir.strip()
 
-        except Exception:
-            return
+        except Exception as e:
+            print(f"[moveup] Warning: could not load config ({self.config_path}): {e}")
 
     def _save_config(self):
         try:
@@ -885,15 +882,15 @@ class MoveUpGUI:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2)
             os.replace(tmp, self.config_path)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[moveup] Warning: could not save config ({self.config_path}): {e}")
 
     def _on_app_close(self):
         self._save_config()
         try:
             self.root.destroy()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[moveup] Warning: error during window close: {e}")
 
     # ------------------------------
     # Base helpers
@@ -902,6 +899,16 @@ class MoveUpGUI:
         if getattr(sys, "frozen", False):
             return os.path.dirname(sys.executable)
         return os.path.dirname(os.path.abspath(__file__))
+
+    @property
+    def export_run_dir(self) -> str:
+        """Lazily create the timestamped export directory on first actual use."""
+        if self._export_run_dir is None:
+            self._export_run_dir = os.path.join(
+                self.export_root, datetime.now().strftime("%Y-%m-%d_%H-%M")
+            )
+            os.makedirs(self._export_run_dir, exist_ok=True)
+        return self._export_run_dir
 
     def _create_kawaii_theme(self):
         if "kawaii_daisy" in self.style.theme_names():
@@ -2118,7 +2125,14 @@ class MoveUpGUI:
         Called when data is loaded or recomputed so Received Date appears/disappears cleanly.
         """
         moveup_cols = self._display_cols_for(df)
-        extra_cols = self._display_cols_for(df)  # kuntal/excluded/all use full set + extras
+
+        # kuntal/excluded/all always show the full COLUMNS_TO_USE set + any extra cols present
+        src = df if df is not None else self.current_df
+        extra_cols = list(COLUMNS_TO_USE)
+        if src is not None and not src.empty:
+            for col in self.DISPLAY_EXTRA_COLUMNS:
+                if col in src.columns and col not in extra_cols:
+                    extra_cols.append(col)
 
         # Only rebuild if columns actually changed to avoid flicker
         current_moveup = list(self.tree["columns"])
@@ -2716,7 +2730,10 @@ class MoveUpGUI:
             messagebox.showwarning("No data", "Import first.")
             return
 
-        if self.excluded_barcodes:
+        # When hide_removed=True, excluded items were already stripped from moveup_df in
+        # _recompute_from_current. We only need to filter here when hide_removed=False
+        # (items are visible in the list but should still be omitted from the export).
+        if self.excluded_barcodes and not self.hide_removed_var.get():
             mu_use = self.moveup_df[~self.moveup_df["Package Barcode"].astype(str).isin(self.excluded_barcodes)].copy()
         else:
             mu_use = self.moveup_df.copy()
@@ -2749,7 +2766,8 @@ class MoveUpGUI:
             messagebox.showwarning("No data", "Import first.")
             return
 
-        if self.excluded_barcodes:
+        # Same logic as do_export_pdf — only filter here when hide_removed=False.
+        if self.excluded_barcodes and not self.hide_removed_var.get():
             mu_use = self.moveup_df[~self.moveup_df["Package Barcode"].astype(str).isin(self.excluded_barcodes)].copy()
         else:
             mu_use = self.moveup_df.copy()

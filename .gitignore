@@ -21,3 +21,8 @@ build/
 dist/
 *.log
 # *.spec      # keep ignored, or comment out to track a specific spec
+
+# App-generated output and user-specific config
+generated/
+moveup_config.json
+kawaii_pdf_settings.json

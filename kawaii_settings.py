@@ -99,7 +99,8 @@ def load_settings() -> KawaiiSettings:
         s.stars_max_extra = int(cfg.get("stars_max_extra", s.stars_max_extra))
         s.clamp_self()
         return s
-    except Exception:
+    except Exception as e:
+        print(f"[moveup] Warning: could not load kawaii settings ({path}): {e}")
         return KawaiiSettings()
 
 
@@ -120,8 +121,8 @@ def save_settings(s: KawaiiSettings) -> None:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
         os.replace(tmp, path)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[moveup] Warning: could not save kawaii settings ({path}): {e}")
 
 
 def reset_defaults() -> KawaiiSettings:

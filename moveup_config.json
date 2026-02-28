@@ -4,7 +4,7 @@
   "selected_brands": [],
   "selected_types": [],
   "kawaii_mode": true,
-  "printer_bw": true,
+  "printer_bw": false,
   "skip_sales_floor": false,
   "hide_removed": true,
   "auto_open_pdf": true,
@@ -14,12 +14,9 @@
   "last_import_dir": "C:/Users/kubic/Downloads",
   "excluded_barcodes": [
     "1A4150300000770000089873",
-    "1A4150300000770000133826",
-    "1A41503000008FD000133974",
-    "1A41503000009C6000020211",
-    "1A4150300000AF1000020803",
-    "1A4150300000C84000040700",
-    "1A4150300001E15000003958"
+    "1A41503000008FD000124208",
+    "1A41503000008FD000124212",
+    "1A4150300000C84000040700"
   ],
   "kuntal_priority_barcodes": [],
   "active_columns": [
