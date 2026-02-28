@@ -1,0 +1,9 @@
+{
+  "preset": "Extra",
+  "printer_bw": false,
+  "bg_hue_pct": 98,
+  "bg_intensity_pct": 57,
+  "elem_intensity_pct": 264,
+  "stars_base": 5,
+  "stars_max_extra": 35
+}
