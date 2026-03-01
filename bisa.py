@@ -1,7 +1,7 @@
 """
 Bisa — Animated ASCII companion for the Move-Up Utility.
 
-She's an earthmed-style husky who reacts to user interactions
+She's a cat companion who reacts to user interactions
 and app events with various animations, tricks, and seasonal themes.
 """
 
@@ -11,7 +11,7 @@ import tkinter as tk
 
 
 class AsciiDogWidget:
-    """Animated ASCII companion widget — Bisa the husky.
+    """Animated ASCII companion widget — Bisa the cat.
 
     - click her to pet (receive_pet)
     - click box/blank space to throw her a treat (throw_treat_at_window_x / frame click)
@@ -224,7 +224,7 @@ class AsciiDogWidget:
         "stretch":  "zzz... yawn~",
         "cleared":  "phew~ clean!",
         "restored": "yay, back!! \u2705",
-        "wag":      "tail wag!!",
+        "wag":      "purrrr~!!",
         "blink":    "blink~",
         "sleep":    "zzz\u2026",
         "zoomies":  "ZOOMIES!! \u26a1",
@@ -252,17 +252,20 @@ class AsciiDogWidget:
         "so many barcodes...",
         "~dreaming of zoomies~",
         "*stares at spreadsheet*",
-        "who's a good dog? me??",
+        "who's a good kitty? me??",
         "need... more... pets...",
         "what does METRC even mean",
-        "tail wag loading... 10%",
+        "purr loading... 10%",
         "\u2728 sparkle sparkle \u2728",
         "hmm... sus barcode \U0001f50d",
         "inventory is my passion",
         "*pretends to help*",
         "one more export plz \U0001f4cb",
-        "bork? bork.",
+        "mrow? mrow.",
         "cannabis... the good stuff \U0001f33f",
+        "*knocks barcode off desk*",
+        "if I fits, I sits \U0001f4e6",
+        "~napping in a box~",
     ]
 
     def __init__(self, parent: tk.Widget):
@@ -409,11 +412,11 @@ class AsciiDogWidget:
             self._after_id = None
 
     TITLES = [
-        (0,    "New Pup \U0001f423"),
-        (10,   "Good Boy \U0001f415"),
+        (0,    "New Kitten \U0001f431"),
+        (10,   "Good Girl \U0001f408"),
         (50,   "Loyal Friend \U0001f43e"),
         (100,  "Treat Fiend \U0001f9b4"),
-        (200,  "Inventory Hound \U0001f4e6"),
+        (200,  "Inventory Cat \U0001f4e6"),
         (500,  "Store Guardian \U0001f6e1\ufe0f"),
         (1000, "LEGENDARY BISA \u2605"),
     ]
@@ -662,7 +665,7 @@ class AsciiDogWidget:
         self._run_anim(frames, self.MESSAGES[msg_key],
                        int(170 * self._speed_scale),
                        lambda: self._run_anim(self.HAPPY_FRAMES[:2],
-                                              "good dog!! \u2728",
+                                              "good kitty!! \u2728",
                                               int(150 * self._speed_scale),
                                               lambda: self._return_idle()))
 

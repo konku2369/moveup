@@ -19,7 +19,7 @@ import tkinter as tk
 # PDF exports live in pdf_export.py
 from pdf_export import export_moveup_pdf_paginated, export_audit_pdfs
 
-# Bisa (ASCII dog companion)
+# Bisa (ASCII cat companion)
 from bisa import AsciiDogWidget
 
 # Core logic
