@@ -61,8 +61,8 @@ def export_excel(
     prio = priority_df.copy() if priority_df is not None else pd.DataFrame(columns=COLUMNS_TO_USE)
 
     if not prio.empty and not mu.empty:
-        prio_bcs = set(prio["Package Barcode"].astype(str).str.strip().tolist())
-        mu = mu[~mu["Package Barcode"].astype(str).str.strip().isin(prio_bcs)].copy()
+        prio_bcs = set(prio["Package Barcode"].astype(str).fillna("").str.strip().tolist())
+        mu = mu[~mu["Package Barcode"].astype(str).fillna("").str.strip().isin(prio_bcs)].copy()
 
     prio = sort_with_backstock_priority(prio) if not prio.empty else prio
     mu = sort_with_backstock_priority(mu) if not mu.empty else mu
@@ -326,6 +326,39 @@ class AsciiDogWidget:
         "  /\\_/\\   ★★★\n ( ✧o✧ )  ★\n  > W <   ★",
     ]
 
+    # Trick frames
+    SIT_FRAMES = [
+        "  /\\_/\\  \n ( o.o ) \n  > ^ <",
+        "  /\\_/\\  \n ( ^.^ ) \n  |   |",
+        "  /\\_/\\  \n ( ^.^ ) \n  | W |",
+        "  /\\_/\\  \n ( u.u ) \n  | W |",
+    ]
+    SHAKE_FRAMES = [
+        "  /\\_/\\  \n ( o.o )/ \n  > ^ <",
+        "  /\\_/\\  \n ( ^.^ )🤝\n  > ^ <",
+        "  /\\_/\\  \n ( ^w^ )🤝\n  > ^ <",
+        "  /\\_/\\  \n ( ^.^ )/ \n  > ^ <",
+    ]
+    SPIN_FRAMES = [
+        "  /\\_/\\  \n ( ^.^ ) \n  > ^ <",
+        "   (\\  \n    )  \n   /  ",
+        "  \\_/\\_ \n   ( ● ) \n  > ^ <",
+        "      /) \n     (   \n      \\  ",
+        "  /\\_/\\  \n ( ^o^ )~\n  > ^ <",
+    ]
+    PLAY_DEAD_FRAMES = [
+        "  /\\_/\\  \n ( O.O )!\n  > ^ <",
+        "  /\\_/\\  \n ( x.x ) \n  > ^ <",
+        "         \n  /\\_/\\_ \n  ( x.x )",
+        "         \n  /\\_/\\_ \n  ( x.x ) ~",
+    ]
+    SNEEZE_FRAMES = [
+        "  /\\_/\\  \n ( o.o ) \n  > ^ <",
+        "  /\\_/\\  \n ( O.O ) \n  > o <",
+        "  /\\_/\\  \n (>w< )!! \n  > ^ < !!",
+        "  /\\_/\\  \n ( ^.^ ) \n  > ^ < ~",
+    ]
+
     HALLOWEEN_FRAMES = [
         "  /\\_/\\   🎃\n ( o.o )  \n  > ^ <",
         "  /\\_/\\   🎃\n ( O.O )  \n  > W <",
@@ -365,7 +398,32 @@ class AsciiDogWidget:
         "belly":    "belly rubs!! ♥",
         "milestone": "milestone!!  ⭐",
         "moveup":    "they moved!! 📦",
+        "sit":       "good sit!! 🐾",
+        "shake":     "nice to meet u! 🤝",
+        "spin":      "wheee~! 🌀",
+        "play_dead": "... 💀 (jk!!)",
+        "sneeze":    "ACHOO!! 🤧",
     }
+
+    THOUGHTS = [
+        "thinking about treats...",
+        "I wonder what's in Backstock...",
+        "is it lunch yet? 🍕",
+        "so many barcodes...",
+        "~dreaming of zoomies~",
+        "*stares at spreadsheet*",
+        "who's a good dog? me??",
+        "need... more... pets...",
+        "what does METRC even mean",
+        "tail wag loading... 10%",
+        "✨ sparkle sparkle ✨",
+        "hmm... sus barcode 🔍",
+        "inventory is my passion",
+        "*pretends to help*",
+        "one more export plz 📋",
+        "bork? bork.",
+        "cannabis... the good stuff 🌿",
+    ]
 
     def __init__(self, parent: tk.Widget):
         self.parent = parent
@@ -418,8 +476,16 @@ class AsciiDogWidget:
         )
         self.dog_label.pack(pady=(2, 0), fill="x", expand=True)
         self.dog_label.bind("<Button-1>", lambda _e: self.receive_pet())
+        self.dog_label.bind("<Double-Button-1>", lambda _e: self._sneeze())
         self.dog_label.bind("<Button-3>", lambda _e: self._belly_rub())
         self.dog_label.bind("<Enter>", self._on_hover)
+
+        # Secret trick input buffer
+        self._trick_buffer = ""
+        self.frame.bind("<Key>", self._on_key)
+        self.frame.configure(takefocus=True)
+        # Also let clicking the frame give it focus for key events
+        self.frame.bind("<Button-1>", lambda e: (self.frame.focus_set(), self._on_frame_click(e)))
 
         self.msg_var = tk.StringVar(value="...")
         tk.Label(
@@ -434,7 +500,7 @@ class AsciiDogWidget:
 
         tk.Label(
             self.frame,
-            text="click box → throw treat  |  click Bisa → pet",
+            text="click → pet  |  dbl-click → boop  |  right-click → belly rub",
             font=("Segoe UI", 8),
             bg=self._theme_bg,
             fg=self._theme_hint,
@@ -448,8 +514,6 @@ class AsciiDogWidget:
             bg=self._theme_bg,
             fg=self._theme_stats,
         ).pack()
-
-        self.frame.bind("<Button-1>", self._on_frame_click)
 
         self._render_frame(self.IDLE_FRAMES[0])
         self._idle_loop()
@@ -504,8 +568,29 @@ class AsciiDogWidget:
                 pass
             self._after_id = None
 
+    TITLES = [
+        (0,    "New Pup 🐣"),
+        (10,   "Good Boy 🐕"),
+        (50,   "Loyal Friend 🐾"),
+        (100,  "Treat Fiend 🦴"),
+        (200,  "Inventory Hound 📦"),
+        (500,  "Store Guardian 🛡️"),
+        (1000, "LEGENDARY BISA ★"),
+    ]
+
+    def _get_title(self) -> str:
+        total = self._total_pets + self._total_treats
+        title = self.TITLES[0][1]
+        for threshold, t in self.TITLES:
+            if total >= threshold:
+                title = t
+        return title
+
     def _update_stats(self):
-        self.stats_var.set(f"pets:{self._total_pets}  treats:{self._total_treats}  moved:{self._total_moveups}")
+        title = self._get_title()
+        self.stats_var.set(
+            f"{title}  |  pets:{self._total_pets}  treats:{self._total_treats}  moved:{self._total_moveups}"
+        )
 
     # ------------------------------
     # Animation engine
@@ -604,9 +689,10 @@ class AsciiDogWidget:
                            lambda: self._return_idle())
             return
 
-        # Original idle cycle
+        # Original idle cycle — occasionally show a random thought
         self._idle_idx = (self._idle_idx + 1) % len(self.IDLE_FRAMES)
-        self._render_frame(self.IDLE_FRAMES[self._idle_idx], "...")
+        thought = random.choice(self.THOUGHTS) if random.random() < 0.15 else "..."
+        self._render_frame(self.IDLE_FRAMES[self._idle_idx], thought)
         self._idle_loop()
 
     # ------------------------------
@@ -696,6 +782,55 @@ class AsciiDogWidget:
         self._run_anim(self.BELLY_FRAMES, self.MESSAGES["belly"],
                        int(150 * self._speed_scale),
                        lambda: self._return_idle())
+
+    def _sneeze(self):
+        """Double-click boop → sneeze animation (interrupts pet, doesn't double-count)."""
+        if self._state not in ("idle", "pet"):
+            return
+        was_pet = (self._state == "pet")  # already counted by receive_pet
+        self._cancel()
+        self._state = "sneeze"
+        if not was_pet:
+            self._total_pets += 1
+            self._update_stats()
+        self._run_anim(self.SNEEZE_FRAMES, self.MESSAGES["sneeze"],
+                       int(160 * self._speed_scale),
+                       lambda: self._return_idle())
+
+    # --- Secret tricks (type while Bisa panel is focused) ---
+    TRICKS = {
+        "sit":       ("sit",       "SIT_FRAMES"),
+        "shake":     ("shake",     "SHAKE_FRAMES"),
+        "spin":      ("spin",      "SPIN_FRAMES"),
+        "roll":      ("spin",      "SPIN_FRAMES"),      # alias
+        "play dead": ("play_dead", "PLAY_DEAD_FRAMES"),
+        "dead":      ("play_dead", "PLAY_DEAD_FRAMES"),  # alias
+    }
+
+    def _on_key(self, event):
+        """Buffer keypresses on the Bisa frame. If the buffer ends with a trick name, perform it."""
+        if not event.char or not event.char.isprintable():
+            return
+        self._trick_buffer = (self._trick_buffer + event.char.lower())[-12:]  # keep last 12 chars
+        for trigger, (msg_key, frames_attr) in self.TRICKS.items():
+            if self._trick_buffer.endswith(trigger):
+                self._trick_buffer = ""
+                self._do_trick(msg_key, getattr(self, frames_attr))
+                return
+
+    def _do_trick(self, msg_key: str, frames: list):
+        if self._state not in ("idle", "pet", "happy"):
+            return
+        self._cancel()
+        self._state = "trick"
+        self._total_pets += 1
+        self._update_stats()
+        self._run_anim(frames, self.MESSAGES[msg_key],
+                       int(170 * self._speed_scale),
+                       lambda: self._run_anim(self.HAPPY_FRAMES[:2],
+                                              "good dog!! ✨",
+                                              int(150 * self._speed_scale),
+                                              lambda: self._return_idle()))
 
     def _on_hover(self, event=None):
         import random
@@ -883,6 +1018,10 @@ class MoveUpGUI:
         self.app_dir = self._determine_app_dir()
         self.config_path = os.path.join(self.app_dir, "moveup_config.json")
 
+        # Backup config in user home directory
+        self._backup_dir = os.path.join(os.path.expanduser("~"), ".moveup")
+        self._backup_config_path = os.path.join(self._backup_dir, "moveup_config_backup.json")
+
         self.export_root = os.path.join(self.app_dir, "generated")
         os.makedirs(self.export_root, exist_ok=True)
         self._export_run_dir: Optional[str] = None  # created lazily on first export/open
@@ -894,6 +1033,7 @@ class MoveUpGUI:
         self.selected_types: List[str] = []
 
         self.last_import_dir: Optional[str] = None
+        self.current_file_path: Optional[str] = None
 
         # Runtime state
         self.raw_df: Optional[pd.DataFrame] = None
@@ -936,7 +1076,22 @@ class MoveUpGUI:
     def _load_config(self):
         try:
             if not os.path.exists(self.config_path):
-                return
+                # Main config missing — check for backup
+                if os.path.exists(self._backup_config_path):
+                    restore = messagebox.askyesno(
+                        "Config Not Found",
+                        "Your main config file is missing, but a backup was found.\n\n"
+                        "Would you like to restore from the backup?\n\n"
+                        "(Choose 'No' to start fresh.)",
+                    )
+                    if restore:
+                        import shutil
+                        shutil.copy2(self._backup_config_path, self.config_path)
+                        print("[moveup] Restored config from backup.")
+                    else:
+                        return
+                else:
+                    return
             with open(self.config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
 
@@ -973,6 +1128,10 @@ class MoveUpGUI:
             if isinstance(last_dir, str) and last_dir.strip() and os.path.isdir(last_dir):
                 self.last_import_dir = last_dir.strip()
 
+            last_file = cfg.get("current_file_path")
+            if isinstance(last_file, str) and last_file.strip() and os.path.isfile(last_file):
+                self.current_file_path = last_file.strip()
+
             self._lifetime_pets    = int(cfg.get("lifetime_pets",    0))
             self._lifetime_treats  = int(cfg.get("lifetime_treats",  0))
             self._lifetime_moveups = int(cfg.get("lifetime_moveups", 0))
@@ -1000,6 +1159,7 @@ class MoveUpGUI:
                 "items_per_page": int(self.page_items_var.get() or 30),
                 "prefix": str(self.prefix_var.get() or ""),
                 "last_import_dir": self.last_import_dir or "",
+                "current_file_path": self.current_file_path or "",
                 "excluded_barcodes": sorted(list(self.excluded_barcodes)),
                 "kuntal_priority_barcodes": sorted(list(self.kuntal_priority_barcodes)),
                 "active_columns": self.active_columns,
@@ -1012,6 +1172,16 @@ class MoveUpGUI:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2)
             os.replace(tmp, self.config_path)
+
+            # Also write backup to user home directory
+            try:
+                os.makedirs(self._backup_dir, exist_ok=True)
+                tmp_bk = self._backup_config_path + ".tmp"
+                with open(tmp_bk, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=2)
+                os.replace(tmp_bk, self._backup_config_path)
+            except Exception:
+                pass  # backup failure is non-critical
         except Exception as e:
             print(f"[moveup] Warning: could not save config ({self.config_path}): {e}")
 
@@ -1108,6 +1278,13 @@ class MoveUpGUI:
         except Exception as e:
             messagebox.showerror("Kawaii PDF Settings", f"Could not open settings window:\n\n{e}")
 
+    def open_expiring_window(self):
+        try:
+            from mainExpiring import open_expiring_window
+            open_expiring_window(self.root, self.current_file_path)
+        except Exception as e:
+            messagebox.showerror("Expiring Soon", f"Could not open window:\n\n{e}")
+
     # ------------------------------
     # UI
     # ------------------------------
@@ -1141,6 +1318,12 @@ class MoveUpGUI:
         )
         btn_kawaii_settings_main.pack(side="left", padx=4)
         self._register_button(btn_kawaii_settings_main, "Kawaii PDF Settings…")
+
+        btn_expiring = ttk.Button(
+            btn_row, text="Expiring Soon…", command=self.open_expiring_window,
+        )
+        btn_expiring.pack(side="left", padx=4)
+        self._register_button(btn_expiring, "Expiring Soon…")
 
         # Advanced toggle (ANCHOR target for frm_advanced)
         self.frm_adv_toggle = ttk.Frame(frm_controls)
@@ -1646,6 +1829,7 @@ class MoveUpGUI:
 
         try:
             self.last_import_dir = os.path.dirname(path)
+            self.current_file_path = path
             self._save_config()
 
             self.status.set(f"Loading {os.path.basename(path)}…")
@@ -2941,7 +3125,7 @@ class MoveUpGUI:
         move_up_df = aggregate_split_packages_by_room(move_up_df)
 
         if self.excluded_barcodes and self.hide_removed_var.get():
-            move_up_df = move_up_df[~move_up_df["Package Barcode"].astype(str).isin(self.excluded_barcodes)].copy()
+            move_up_df = move_up_df[~move_up_df["Package Barcode"].astype(str).fillna("").isin(self.excluded_barcodes)].copy()
 
         move_up_df = sort_with_backstock_priority(move_up_df)
         self.moveup_df = move_up_df
@@ -2990,7 +3174,7 @@ class MoveUpGUI:
         # _recompute_from_current. We only need to filter here when hide_removed=False
         # (items are visible in the list but should still be omitted from the export).
         if self.excluded_barcodes and not self.hide_removed_var.get():
-            mu_use = self.moveup_df[~self.moveup_df["Package Barcode"].astype(str).isin(self.excluded_barcodes)].copy()
+            mu_use = self.moveup_df[~self.moveup_df["Package Barcode"].astype(str).fillna("").isin(self.excluded_barcodes)].copy()
         else:
             mu_use = self.moveup_df.copy()
 
@@ -3024,7 +3208,7 @@ class MoveUpGUI:
 
         # Same logic as do_export_pdf — only filter here when hide_removed=False.
         if self.excluded_barcodes and not self.hide_removed_var.get():
-            mu_use = self.moveup_df[~self.moveup_df["Package Barcode"].astype(str).isin(self.excluded_barcodes)].copy()
+            mu_use = self.moveup_df[~self.moveup_df["Package Barcode"].astype(str).fillna("").isin(self.excluded_barcodes)].copy()
         else:
             mu_use = self.moveup_df.copy()
 
