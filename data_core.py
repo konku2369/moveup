@@ -11,7 +11,8 @@ import pandas as pd
 # ------------------------------
 # Single source constants
 # ------------------------------
-APP_VERSION = "3.10.0"
+APP_VERSION = "4.0.0"
+APP_NAME = "Konrad's Move-Up Utility"
 
 COLUMNS_TO_USE = ["Type", "Brand", "Product Name", "Package Barcode", "Room", "Qty On Hand"]
 AUDIT_OPTIONAL_FIELDS = ["Distributor", "Store", "Size", "Received Date"]

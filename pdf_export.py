@@ -46,7 +46,7 @@ PDF_PROFILE = {
 
     "type_trunc": TYPE_TRUNC_LEN,
     "product_trunc": 75,
-    "room_trunc": 14,
+    "room_trunc": 12,
     "barcode_tail_moveup": 6,
     "metrc_tail_audit": 8,
 

@@ -22,6 +22,7 @@ from pdf_export import export_moveup_pdf_paginated, export_audit_pdfs
 # Core logic
 from data_core import (
     APP_VERSION,
+    APP_NAME,
     COLUMNS_TO_USE,
     AUDIT_OPTIONAL_FIELDS,
     TYPE_TRUNC_LEN,
@@ -363,6 +364,7 @@ class AsciiDogWidget:
         "winter":   "brr… ❄️",
         "belly":    "belly rubs!! ♥",
         "milestone": "milestone!!  ⭐",
+        "moveup":    "they moved!! 📦",
     }
 
     def __init__(self, parent: tk.Widget):
@@ -374,6 +376,7 @@ class AsciiDogWidget:
         self._anim_frames = []
         self._total_pets = 0
         self._total_treats = 0
+        self._total_moveups = 0
         self._interactions_since_milestone = 0
         self._next_milestone_interval = random.randint(60, 100)
 
@@ -502,7 +505,7 @@ class AsciiDogWidget:
             self._after_id = None
 
     def _update_stats(self):
-        self.stats_var.set(f"pets:{self._total_pets}  treats:{self._total_treats}")
+        self.stats_var.set(f"pets:{self._total_pets}  treats:{self._total_treats}  moved:{self._total_moveups}")
 
     # ------------------------------
     # Animation engine
@@ -769,6 +772,17 @@ class AsciiDogWidget:
         self._run_anim(self.LOAD_FRAMES, self.MESSAGES["loaded"], int(320 * self._speed_scale),
                        lambda: self._return_idle())
 
+    def react_moveups(self, count: int):
+        """Celebrate when SKUs are detected as moved to Sales Floor since last load."""
+        self._cancel()
+        self._state = "moveup"
+        msg = f"{count} SKU{'s' if count != 1 else ''} moved!! 📦"
+        self._run_anim(
+            self.ZOOMIES_FRAMES, msg, int(130 * self._speed_scale),
+            lambda: self._run_anim(self.HAPPY_FRAMES[:3], msg, int(160 * self._speed_scale),
+                                   lambda: self._return_idle()),
+        )
+
     def react_excluded(self, count: int = 1):
         if self._state != "idle":
             return
@@ -841,7 +855,7 @@ class MoveUpGUI:
 
     def __init__(self, root: Tk):
         self.root = root
-        self.base_title = f"Move-Up v{APP_VERSION} — KK"
+        self.base_title = f"{APP_NAME} v{APP_VERSION}"
         self.root.title(self.base_title)
         self.root.geometry("1240x920")
 
@@ -894,6 +908,10 @@ class MoveUpGUI:
         # Lifetime Bisa stats (loaded from config before UI is built)
         self._lifetime_pets: int = 0
         self._lifetime_treats: int = 0
+        self._lifetime_moveups: int = 0
+
+        # Previous inventory snapshot for move-up detection (barcode → room, lowercase)
+        self._prev_inventory_snapshot: Dict[str, str] = {}
 
         self._load_config()
         self._build_ui()
@@ -901,6 +919,7 @@ class MoveUpGUI:
         # Push persisted totals into the widget now that it exists
         self.dog_widget._total_pets = self._lifetime_pets
         self.dog_widget._total_treats = self._lifetime_treats
+        self.dog_widget._total_moveups = self._lifetime_moveups
         self.dog_widget._update_stats()
         self.dog_widget.greet_startup()
 
@@ -954,8 +973,13 @@ class MoveUpGUI:
             if isinstance(last_dir, str) and last_dir.strip() and os.path.isdir(last_dir):
                 self.last_import_dir = last_dir.strip()
 
-            self._lifetime_pets   = int(cfg.get("lifetime_pets",   0))
-            self._lifetime_treats = int(cfg.get("lifetime_treats", 0))
+            self._lifetime_pets    = int(cfg.get("lifetime_pets",    0))
+            self._lifetime_treats  = int(cfg.get("lifetime_treats",  0))
+            self._lifetime_moveups = int(cfg.get("lifetime_moveups", 0))
+
+            snap = cfg.get("prev_inventory_snapshot", {})
+            if isinstance(snap, dict):
+                self._prev_inventory_snapshot = snap
 
         except Exception as e:
             print(f"[moveup] Warning: could not load config ({self.config_path}): {e}")
@@ -979,8 +1003,10 @@ class MoveUpGUI:
                 "excluded_barcodes": sorted(list(self.excluded_barcodes)),
                 "kuntal_priority_barcodes": sorted(list(self.kuntal_priority_barcodes)),
                 "active_columns": self.active_columns,
-                "lifetime_pets":   self.dog_widget._total_pets   if hasattr(self, "dog_widget") else self._lifetime_pets,
-                "lifetime_treats": self.dog_widget._total_treats if hasattr(self, "dog_widget") else self._lifetime_treats,
+                "lifetime_pets":    self.dog_widget._total_pets    if hasattr(self, "dog_widget") else self._lifetime_pets,
+                "lifetime_treats":  self.dog_widget._total_treats  if hasattr(self, "dog_widget") else self._lifetime_treats,
+                "lifetime_moveups": self.dog_widget._total_moveups if hasattr(self, "dog_widget") else self._lifetime_moveups,
+                "prev_inventory_snapshot": self._prev_inventory_snapshot,
             }
             tmp = self.config_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -1636,8 +1662,42 @@ class MoveUpGUI:
                 self._update_kuntalcount()
 
                 self.status.set(f"Loaded {len(mapped)} rows. Auto-mapped columns.")
-                if hasattr(self, "dog_widget"):
+
+                # --- Bisa move-up detection ---
+                # Build a normalized room snapshot for the new inventory
+                _snap_df = normalize_rooms(mapped.copy(), self.room_alias_map)
+                _sf_set = {"sales floor"} | SALES_FLOOR_ALIASES
+                new_snap: Dict[str, str] = {}
+                if "Package Barcode" in _snap_df.columns and "Room" in _snap_df.columns:
+                    new_snap = {
+                        str(bc).strip(): str(rm).strip().lower()
+                        for bc, rm in zip(
+                            _snap_df["Package Barcode"].astype(str),
+                            _snap_df["Room"].astype(str),
+                        )
+                        if str(bc).strip() and str(bc).strip().lower() != "nan"
+                    }
+                # Count SKUs that moved from a non-SF room → SF room
+                # Compare against most recent snapshot only
+                _moved = 0
+                if self._prev_inventory_snapshot:
+                    for bc, new_room in new_snap.items():
+                        old_room = self._prev_inventory_snapshot.get(bc)
+                        if old_room is not None:
+                            if old_room not in _sf_set and new_room in _sf_set:
+                                _moved += 1
+                # Replace snapshot with current import (single instance only)
+                self._prev_inventory_snapshot = new_snap
+                self._save_config()
+
+                if _moved > 0 and hasattr(self, "dog_widget"):
+                    self.dog_widget._total_moveups += _moved
+                    self.dog_widget._update_stats()
+                    self.dog_widget.react_moveups(_moved)
+                elif hasattr(self, "dog_widget"):
                     self.dog_widget.react_data_loaded(len(mapped))
+                # ------------------------------------
+
                 self._update_rowcount(mapped)
                 self._recompute_from_current()
                 return
