@@ -927,7 +927,7 @@ class MoveUpGUI:
     # Window-wide treat throwing
     # ------------------------------
     def _bind_window_treat(self):
-        """Any click on blank space throws a treat for Bisa."""
+        """Any click on blank space throws Bisa a treat."""
         # Widget types that should NOT trigger a treat (they have their own click behaviour)
         _SKIP_TYPES = (
             "Button", "TButton", "Treeview", "Entry", "TEntry",
@@ -945,7 +945,7 @@ class MoveUpGUI:
             wtype = w.winfo_class()
             if any(wtype == t or wtype.endswith(t) for t in _SKIP_TYPES):
                 return
-            # Also skip if the widget is inside the dog's own frame
+            # Also skip if the widget is inside Bisa's own frame
             try:
                 parent = w
                 while parent:
