@@ -1,7 +1,7 @@
 """
-Bisa — Animated ASCII dog widget for the Move-Up Utility.
+Bisa — Animated ASCII companion for the Move-Up Utility.
 
-An earthmed-style husky companion that reacts to user interactions
+She's an earthmed-style husky who reacts to user interactions
 and app events with various animations, tricks, and seasonal themes.
 """
 
@@ -11,13 +11,13 @@ import tkinter as tk
 
 
 class AsciiDogWidget:
-    """Animated ASCII dog widget (Bisa) with expanded behaviors.
+    """Animated ASCII companion widget — Bisa the husky.
 
-    - click dog to pet (receive_pet)
-    - click box/blank space to throw treat (throw_treat_at_window_x / frame click)
+    - click her to pet (receive_pet)
+    - click box/blank space to throw her a treat (throw_treat_at_window_x / frame click)
     - stats counter (pets/treats)
     - react_* methods used by the app
-    - more idle micro-animations (wag, blink, sleep, zoomies)
+    - idle micro-animations (wag, blink, sleep, zoomies)
     - contextual reactions (success/warning/error)
     - seasonal theme accents (Oct/Dec)
     - rare "legendary" easter egg (1% chance)
@@ -554,7 +554,7 @@ class AsciiDogWidget:
                            lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(110 * self._speed_scale),
                                                   lambda: self._return_idle()))
         except Exception as e:
-            print(f"[moveup] Dog widget click error: {e}")
+            print(f"[moveup] Bisa click error: {e}")
 
     def receive_pet(self):
         if self._state != "idle":
@@ -618,7 +618,7 @@ class AsciiDogWidget:
                        lambda: self._return_idle())
 
     def _sneeze(self):
-        """Double-click boop -> sneeze animation (interrupts pet, doesn't double-count)."""
+        """Double-click boop -> Bisa sneezes (interrupts pet, doesn't double-count)."""
         if self._state not in ("idle", "pet"):
             return
         was_pet = (self._state == "pet")  # already counted by receive_pet
@@ -642,7 +642,7 @@ class AsciiDogWidget:
     }
 
     def _on_key(self, event):
-        """Buffer keypresses on the Bisa frame. If the buffer ends with a trick name, perform it."""
+        """Buffer keypresses on Bisa's frame. If the buffer ends with a trick name, she performs it."""
         if not event.char or not event.char.isprintable():
             return
         self._trick_buffer = (self._trick_buffer + event.char.lower())[-12:]  # keep last 12 chars
@@ -677,7 +677,7 @@ class AsciiDogWidget:
                            lambda: self._return_idle())
 
     def _maybe_milestone(self, count: int) -> bool:
-        """Fire a celebration animation at fixed milestones OR every ~80 interactions (+/-20)."""
+        """Bisa celebrates at fixed milestones OR every ~80 interactions (+/-20)."""
         self._interactions_since_milestone += 1
         fixed_milestones = {10, 25, 50, 100, 200, 500, 1000}
         interval_hit = self._interactions_since_milestone >= self._next_milestone_interval
@@ -699,7 +699,7 @@ class AsciiDogWidget:
         return True
 
     def greet_startup(self):
-        """Time-of-day greeting shown once when the app launches."""
+        """Bisa greets the user based on time of day when the app launches."""
         hour = datetime.now().hour
         if hour < 6:
             msg, frames = "up late?? \U0001f319", self.SLEEP_FRAMES
@@ -740,7 +740,7 @@ class AsciiDogWidget:
                        lambda: self._return_idle())
 
     def react_moveups(self, count: int):
-        """Celebrate when SKUs are detected as moved to Sales Floor since last load."""
+        """Bisa celebrates when SKUs are detected as moved to Sales Floor since last load."""
         self._cancel()
         self._state = "moveup"
         msg = f"{count} SKU{'s' if count != 1 else ''} moved!! \U0001f4e6"
