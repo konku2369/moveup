@@ -197,6 +197,8 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     w, h = letter
     canvas.saveState()
 
+    is_bw = bool(prof.get("printer_bw", False))
+
     tint_a = float(prof.get("tint_alpha", 0.0))
     stroke_a = float(prof.get("stroke_alpha", 0.08))
     sparkle_a = float(prof.get("sparkle_alpha", 0.06))
@@ -208,8 +210,8 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     sr, sg, sb = prof.get("stroke_rgb", (0.55, 0.40, 0.50))
     stroke_col = Color(float(sr), float(sg), float(sb))
 
-    # --- Tint wash (color mode only — B/W keeps background pure white) ---
-    if tint_a > 0 and not bool(prof.get("printer_bw", False)):
+    # --- Tint wash (skip in B/W — keep background pure white) ---
+    if tint_a > 0 and not is_bw:
         tr, tg, tb = prof.get("tint_rgb", (1.0, 0.84, 0.92))
         _set_alpha(canvas, tint_a)
         canvas.setFillColor(Color(float(tr), float(tg), float(tb)))
@@ -308,10 +310,10 @@ def _draw_page(canvas, doc, kawaii_pdf: bool, prof: Optional[dict] = None):
 
 def _table_style_kawaii(printer_bw: bool):
     if printer_bw:
-        header_bg = Color(0.96, 0.96, 0.97)
-        row_a = Color(0.99, 0.99, 1.00)
-        row_b = Color(0.97, 0.97, 0.985)
-        grid = Color(0.75, 0.75, 0.78)
+        header_bg = Color(0.92, 0.92, 0.92)
+        row_a = Color(1.0, 1.0, 1.0)
+        row_b = Color(0.95, 0.95, 0.95)
+        grid = Color(0.75, 0.75, 0.75)
     else:
         header_bg = Color(0.96, 0.90, 0.95)
         row_a = Color(0.995, 0.965, 0.985)

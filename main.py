@@ -179,7 +179,6 @@ class MoveUpGUI:
         self.base_theme = self.style.theme_use()
 
         # Persisted vars
-        self.kawaii_var = BooleanVar(value=False)
         self.printer_bw_var = BooleanVar(value=False)
         self.skip_sales_floor_var = BooleanVar(value=False)
         self.hide_removed_var = BooleanVar(value=True)
@@ -282,7 +281,6 @@ class MoveUpGUI:
             self.selected_brands = list(cfg.get("selected_brands", []) or [])
             self.selected_types = list(cfg.get("selected_types", []) or [])
 
-            self.kawaii_var.set(bool(cfg.get("kawaii_mode", self.kawaii_var.get())))
             self.printer_bw_var.set(bool(cfg.get("printer_bw", self.printer_bw_var.get())))
             self.skip_sales_floor_var.set(bool(cfg.get("skip_sales_floor", self.skip_sales_floor_var.get())))
             self.hide_removed_var.set(bool(cfg.get("hide_removed", self.hide_removed_var.get())))
@@ -333,7 +331,6 @@ class MoveUpGUI:
                 "selected_rooms": self.selected_rooms,
                 "selected_brands": self.selected_brands,
                 "selected_types": self.selected_types,
-                "kawaii_mode": bool(self.kawaii_var.get()),
                 "printer_bw": bool(self.printer_bw_var.get()),
                 "skip_sales_floor": bool(self.skip_sales_floor_var.get()),
                 "hide_removed": bool(self.hide_removed_var.get()),
@@ -447,18 +444,12 @@ class MoveUpGUI:
 
     def _refresh_button_labels(self):
         for btn, base in self._button_registry:
-            btn.config(text=(f"🌼 {base} 🌼" if self.kawaii_var.get() else base))
+            btn.config(text=f"🌼 {base} 🌼")
 
     def _toggle_theme(self, initial: bool = False):
-        if self.kawaii_var.get():
-            self.style.theme_use("kawaii_daisy")
-            self.root.title(self.base_title + " 🌼🌼🌼")
-        else:
-            self.style.theme_use(self.base_theme)
-            self.root.title(self.base_title)
+        self.style.theme_use("kawaii_daisy")
+        self.root.title(self.base_title + " 🌼🌼🌼")
         self._refresh_button_labels()
-        if not initial:
-            self._save_config()
 
     def open_kawaii_settings(self):
         try:
@@ -538,11 +529,6 @@ class MoveUpGUI:
         btn_folder = ttk.Button(adv_row, text="Open Output Folder", command=self.open_output_folder)
         btn_folder.pack(side="left", padx=4)
         self._register_button(btn_folder, "Open Output Folder")
-
-        ttk.Checkbutton(
-            adv_row, text="Kawaii mode",
-            variable=self.kawaii_var, command=self._toggle_theme,
-        ).pack(side="left", padx=6)
 
         ttk.Checkbutton(
             adv_row, text="Printer B/W",
@@ -1687,7 +1673,7 @@ class MoveUpGUI:
                     base_dir=self.export_run_dir,
                     title_text=title_var.get().strip() or "Inventory Audit",
                     sort_mode=sort_mode_var.get(),
-                    kawaii_pdf=bool(self.kawaii_var.get()),
+                    kawaii_pdf=True,
                     printer_bw=bool(self.printer_bw_var.get()),
                     auto_open=bool(self.auto_open_var.get()),
                     default_store=default_store_var.get().strip() or "Store",
@@ -2382,7 +2368,7 @@ class MoveUpGUI:
                 prefix=self.prefix_var.get() or None,
                 auto_open=self.auto_open_var.get(),
                 items_per_page=int(self.page_items_var.get() or 30),
-                kawaii_pdf=bool(self.kawaii_var.get()),
+                kawaii_pdf=True,
                 printer_bw=bool(self.printer_bw_var.get()),
             )
             self.status.set(f"PDF saved: {os.path.basename(p)}")
