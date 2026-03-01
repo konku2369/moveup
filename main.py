@@ -230,6 +230,7 @@ class MoveUpGUI:
         self._lifetime_pets: int = 0
         self._lifetime_treats: int = 0
         self._lifetime_moveups: int = 0
+        self._bisa_name: str = "Bisa"
 
         # Previous inventory snapshot for move-up detection (barcode → room, lowercase)
         self._prev_inventory_snapshot: Dict[str, str] = {}
@@ -316,6 +317,7 @@ class MoveUpGUI:
             self._lifetime_pets    = int(cfg.get("lifetime_pets",    0))
             self._lifetime_treats  = int(cfg.get("lifetime_treats",  0))
             self._lifetime_moveups = int(cfg.get("lifetime_moveups", 0))
+            self._bisa_name        = str(cfg.get("bisa_name", "Bisa")) or "Bisa"
 
             snap = cfg.get("prev_inventory_snapshot", {})
             if isinstance(snap, dict):
@@ -347,6 +349,7 @@ class MoveUpGUI:
                 "lifetime_pets":    self.dog_widget._total_pets    if hasattr(self, "dog_widget") else self._lifetime_pets,
                 "lifetime_treats":  self.dog_widget._total_treats  if hasattr(self, "dog_widget") else self._lifetime_treats,
                 "lifetime_moveups": self.dog_widget._total_moveups if hasattr(self, "dog_widget") else self._lifetime_moveups,
+                "bisa_name":        self.dog_widget._name          if hasattr(self, "dog_widget") else self._bisa_name,
                 "prev_inventory_snapshot": self._prev_inventory_snapshot,
             }
             tmp = self.config_path + ".tmp"
@@ -365,6 +368,11 @@ class MoveUpGUI:
                 pass  # backup failure is non-critical
         except Exception as e:
             print(f"[moveup] Warning: could not save config ({self.config_path}): {e}")
+
+    def _on_bisa_renamed(self, new_name: str):
+        """Callback from Bisa widget when the user renames her."""
+        self._bisa_name = new_name
+        self._save_config()
 
     def _on_app_close(self):
         self._save_config()
@@ -568,7 +576,11 @@ class MoveUpGUI:
         ttk.Label(frm_controls, textvariable=self.filters_summary_var, anchor="w", wraplength=480).pack(fill="x")
 
         # ── Right: Bisa — stretch wide, top-aligned ──
-        self.dog_widget = AsciiDogWidget(frm_top_row)
+        self.dog_widget = AsciiDogWidget(
+            frm_top_row,
+            name=self._bisa_name,
+            on_rename=self._on_bisa_renamed,
+        )
         self.dog_widget.frame.pack(side="left", fill="x", expand=True, anchor="n")
 
         # ==============================

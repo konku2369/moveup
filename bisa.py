@@ -8,6 +8,7 @@ and app events with various animations, tricks, and seasonal themes.
 import random
 from datetime import datetime
 import tkinter as tk
+from tkinter import simpledialog
 
 
 class AsciiDogWidget:
@@ -268,8 +269,10 @@ class AsciiDogWidget:
         "~napping in a box~",
     ]
 
-    def __init__(self, parent: tk.Widget):
+    def __init__(self, parent: tk.Widget, name: str = "Bisa", on_rename=None):
         self.parent = parent
+        self._name = name
+        self._on_rename = on_rename
         self._state = "idle"
         self._after_id = None
         self._idle_idx = 0
@@ -299,13 +302,16 @@ class AsciiDogWidget:
             pady=6,
         )
 
-        tk.Label(
+        self._title_label = tk.Label(
             self.frame,
-            text="\u2726 Bisa \u2726",
+            text=f"\u2726 {self._name} \u2726",
             font=("Segoe UI", 10, "bold"),
             bg=self._theme_bg,
             foreground=self._theme_accent,
-        ).pack()
+            cursor="hand2",
+        )
+        self._title_label.pack()
+        self._title_label.bind("<Double-Button-1>", lambda _e: self._show_rename_dialog())
 
         self.dog_var = tk.StringVar()
         self.dog_label = tk.Label(
@@ -343,7 +349,7 @@ class AsciiDogWidget:
 
         tk.Label(
             self.frame,
-            text="click \u2192 pet  |  dbl-click \u2192 boop  |  right-click \u2192 belly rub",
+            text="click \u2192 pet  |  dbl-click \u2192 boop  |  right-click \u2192 belly rub  |  dbl-click name \u2192 rename",
             font=("Segoe UI", 8),
             bg=self._theme_bg,
             fg=self._theme_hint,
@@ -427,6 +433,9 @@ class AsciiDogWidget:
         for threshold, t in self.TITLES:
             if total >= threshold:
                 title = t
+        # Legendary title uses the pet's actual name
+        if total >= 1000:
+            title = f"LEGENDARY {self._name.upper()} \u2605"
         return title
 
     def _update_stats(self):
@@ -434,6 +443,27 @@ class AsciiDogWidget:
         self.stats_var.set(
             f"{title}  |  pets:{self._total_pets}  treats:{self._total_treats}  moved:{self._total_moveups}"
         )
+
+    def set_name(self, name: str):
+        """Update the pet's display name."""
+        self._name = name.strip() or "Bisa"
+        self._title_label.config(text=f"\u2726 {self._name} \u2726")
+        self._update_stats()
+
+    def _show_rename_dialog(self):
+        """Open a dialog to rename the pet. Triggered by double-clicking her name."""
+        new_name = simpledialog.askstring(
+            "Rename",
+            f"Enter a new name for {self._name}:",
+            initialvalue=self._name,
+            parent=self.frame,
+        )
+        if new_name and new_name.strip():
+            self.set_name(new_name.strip())
+            self.msg_var.set(f"I'm {self._name} now!! \u2728")
+            # Notify main app to persist the change
+            if self._on_rename:
+                self._on_rename(self._name)
 
     # ------------------------------
     # Animation engine
@@ -468,7 +498,7 @@ class AsciiDogWidget:
             self._state = "legendary"
             self._run_anim(
                 self.LEGENDARY_FRAMES,
-                self.MESSAGES["legendary"],
+                f"LEGENDARY {self._name.upper()}!! \u2605\u2605\u2605",
                 int(200 * self._speed_scale),
                 lambda: self._return_idle(),
             )
@@ -492,10 +522,10 @@ class AsciiDogWidget:
 
         # Seasonal cameo (occasional)
         if self._seasonal_idle_frames and random.random() < 0.12:
-            msg_key = "halloween" if datetime.now().month == 10 else "winter"
+            msg = f"spooky {self._name} \U0001f383" if datetime.now().month == 10 else self.MESSAGES["winter"]
             self._cancel()
             self._state = "idle"
-            self._run_anim(self._seasonal_idle_frames, self.MESSAGES.get(msg_key, "..."), int(420 * self._speed_scale),
+            self._run_anim(self._seasonal_idle_frames, msg, int(420 * self._speed_scale),
                            lambda: self._return_idle())
             return
 
