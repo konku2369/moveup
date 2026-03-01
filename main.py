@@ -302,6 +302,12 @@ class AsciiDogWidget:
         "  /\\_/\\  \n ( O.o ) ?\n  > ^ <",
         "  /\\_/\\  \n ( o.O ) ?\n  > ^ <",
     ]
+    BELLY_FRAMES = [
+        "  /\\_/\\  \n  ( ^o^ ) \n  ~> w <~",
+        "  /\\_/\\  \n  ( ^w^ )♥\n  ~> w <~",
+        "  /\\_/\\  \n  ( ^.^ )♥\n  ~> w <~",
+        "  /\\_/\\  \n  ( u.u )♥\n  ~> ^ <~",
+    ]
     SUCCESS_FRAMES = [
         "    /\\_/\\   \n   ( ^o^)✨ \n    > ^ <",
         "      /\\_/\\ \n     ( ^w^)✨\n      > ^ <",
@@ -355,6 +361,8 @@ class AsciiDogWidget:
         "legendary": "LEGENDARY BISAAAA ★★★",
         "halloween": "spooky Bisa 🎃",
         "winter":   "brr… ❄️",
+        "belly":    "belly rubs!! ♥",
+        "milestone": "milestone!!  ⭐",
     }
 
     def __init__(self, parent: tk.Widget):
@@ -366,6 +374,8 @@ class AsciiDogWidget:
         self._anim_frames = []
         self._total_pets = 0
         self._total_treats = 0
+        self._interactions_since_milestone = 0
+        self._next_milestone_interval = random.randint(60, 100)
 
         # Animation tuning
         self._speed_scale = 1.0
@@ -405,6 +415,8 @@ class AsciiDogWidget:
         )
         self.dog_label.pack(pady=(2, 0), fill="x", expand=True)
         self.dog_label.bind("<Button-1>", lambda _e: self.receive_pet())
+        self.dog_label.bind("<Button-3>", lambda _e: self._belly_rub())
+        self.dog_label.bind("<Enter>", self._on_hover)
 
         self.msg_var = tk.StringVar(value="...")
         tk.Label(
@@ -612,6 +624,8 @@ class AsciiDogWidget:
 
             if self._maybe_play_legendary():
                 return
+            if self._maybe_milestone(self._total_treats):
+                return
 
             self._run_anim(go_frames, self.MESSAGES["treat"], int(110 * self._speed_scale),
                            lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(110 * self._speed_scale),
@@ -629,6 +643,8 @@ class AsciiDogWidget:
         self._update_stats()
 
         if self._maybe_play_legendary():
+            return
+        if self._maybe_milestone(self._total_pets):
             return
 
         self._run_anim(self.PET_FRAMES, self.MESSAGES["pet"], int(180 * self._speed_scale),
@@ -653,10 +669,82 @@ class AsciiDogWidget:
 
         if self._maybe_play_legendary():
             return
+        if self._maybe_milestone(self._total_treats):
+            return
 
         self._run_anim(go_frames, self.MESSAGES["treat"], int(200 * self._speed_scale),
                        lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(200 * self._speed_scale),
                                               lambda: self._return_idle()))
+
+    # ------------------------------
+    # New interactions
+    # ------------------------------
+    def _belly_rub(self):
+        if self._state not in ("idle", "pet"):
+            return
+        self._cancel()
+        self._state = "pet"
+        self._total_pets += 1
+        self._update_stats()
+        if self._maybe_play_legendary():
+            return
+        if self._maybe_milestone(self._total_pets):
+            return
+        self._run_anim(self.BELLY_FRAMES, self.MESSAGES["belly"],
+                       int(150 * self._speed_scale),
+                       lambda: self._return_idle())
+
+    def _on_hover(self, event=None):
+        import random
+        if self._state != "idle":
+            return
+        if random.random() < 0.28:
+            self._cancel()
+            self._state = "sniff"
+            self._run_anim(self.SNIFF_FRAMES, self.MESSAGES["sniff"],
+                           int(180 * self._speed_scale),
+                           lambda: self._return_idle())
+
+    def _maybe_milestone(self, count: int) -> bool:
+        """Fire a celebration animation at fixed milestones OR every ~80 interactions (±20)."""
+        self._interactions_since_milestone += 1
+        fixed_milestones = {10, 25, 50, 100, 200, 500, 1000}
+        interval_hit = self._interactions_since_milestone >= self._next_milestone_interval
+        if count not in fixed_milestones and not interval_hit:
+            return False
+        # Reset interval counter and pick next random threshold
+        self._interactions_since_milestone = 0
+        self._next_milestone_interval = random.randint(60, 100)
+        stars = "⭐" * min(5, (count // 100) + 1)
+        msg = f"{stars} {count} total!!"
+        self._run_anim(
+            self.KUNTAL_FRAMES,
+            msg,
+            int(140 * self._speed_scale),
+            lambda: self._run_anim(self.HAPPY_FRAMES[:2], msg,
+                                   int(130 * self._speed_scale),
+                                   lambda: self._return_idle()),
+        )
+        return True
+
+    def greet_startup(self):
+        """Time-of-day greeting shown once when the app launches."""
+        from datetime import datetime
+        hour = datetime.now().hour
+        if hour < 6:
+            msg, frames = "up late?? 🌙", self.SLEEP_FRAMES
+        elif hour < 12:
+            msg, frames = "good morning!! ☀️", self.LOAD_FRAMES[:3]
+        elif hour < 17:
+            msg, frames = "good afternoon~ 🌤️", self.HAPPY_FRAMES[:3]
+        elif hour < 21:
+            msg, frames = "good evening! 🌆", self.WAG_FRAMES
+        else:
+            msg, frames = "working late? 🌙", self.BLINK_FRAMES
+        self._cancel()
+        self._state = "idle"
+        self._run_anim(frames, msg, int(200 * self._speed_scale),
+                       lambda: self._return_idle())
 
     # ------------------------------
     # Reactions (kept)
@@ -814,6 +902,7 @@ class MoveUpGUI:
         self.dog_widget._total_pets = self._lifetime_pets
         self.dog_widget._total_treats = self._lifetime_treats
         self.dog_widget._update_stats()
+        self.dog_widget.greet_startup()
 
         self._bind_window_treat()
         self._toggle_theme(initial=True)
