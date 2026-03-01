@@ -535,6 +535,9 @@ class MoveUpGUI:
             variable=self.printer_bw_var, command=self._save_config,
         ).pack(side="left", padx=6)
 
+        btn_filters = ttk.Button(adv_row, text="Filters…", command=self.open_filters_window)
+        btn_filters.pack(side="left", padx=4)
+        self._register_button(btn_filters, "Filters…")
 
         # Items per page (ANCHOR)
         self.frm_page = ttk.Frame(frm_controls)
