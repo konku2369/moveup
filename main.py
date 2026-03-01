@@ -230,6 +230,7 @@ class MoveUpGUI:
         self._lifetime_treats: int = 0
         self._lifetime_moveups: int = 0
         self._bisa_name: str = "Bisa"
+        self._catnip_redeemed: int = 0
 
         # Previous inventory snapshot for move-up detection (barcode → room, lowercase)
         self._prev_inventory_snapshot: Dict[str, str] = {}
@@ -241,6 +242,8 @@ class MoveUpGUI:
         self.dog_widget._total_pets = self._lifetime_pets
         self.dog_widget._total_treats = self._lifetime_treats
         self.dog_widget._total_moveups = self._lifetime_moveups
+        self.dog_widget._catnip_redeemed = self._catnip_redeemed
+        self.dog_widget._on_catnip_change = self._on_catnip_redeemed
         self.dog_widget._update_stats()
         self.dog_widget.greet_startup()
 
@@ -316,6 +319,7 @@ class MoveUpGUI:
             self._lifetime_treats  = int(cfg.get("lifetime_treats",  0))
             self._lifetime_moveups = int(cfg.get("lifetime_moveups", 0))
             self._bisa_name        = str(cfg.get("bisa_name", "Bisa")) or "Bisa"
+            self._catnip_redeemed  = int(cfg.get("catnip_redeemed", 0))
 
             snap = cfg.get("prev_inventory_snapshot", {})
             if isinstance(snap, dict):
@@ -347,6 +351,7 @@ class MoveUpGUI:
                 "lifetime_treats":  self.dog_widget._total_treats  if hasattr(self, "dog_widget") else self._lifetime_treats,
                 "lifetime_moveups": self.dog_widget._total_moveups if hasattr(self, "dog_widget") else self._lifetime_moveups,
                 "bisa_name":        self.dog_widget._name          if hasattr(self, "dog_widget") else self._bisa_name,
+                "catnip_redeemed":  self.dog_widget._catnip_redeemed if hasattr(self, "dog_widget") else self._catnip_redeemed,
                 "prev_inventory_snapshot": self._prev_inventory_snapshot,
             }
             tmp = self.config_path + ".tmp"
@@ -369,6 +374,11 @@ class MoveUpGUI:
     def _on_bisa_renamed(self, new_name: str):
         """Callback from Bisa widget when the user renames her."""
         self._bisa_name = new_name
+        self._save_config()
+
+    def _on_catnip_redeemed(self, redeemed_count: int):
+        """Callback from Bisa widget when catnip is redeemed."""
+        self._catnip_redeemed = redeemed_count
         self._save_config()
 
     def _on_app_close(self):

@@ -211,6 +211,107 @@ class AsciiDogWidget:
         "  /\\_/\\   \u2603\ufe0f\n ( u.u )  \n  > ^ <\n /|   |\\\n(_|   |_)",
     ]
 
+    BOX_FRAMES = [
+        # Bisa spots the box
+        "  /\\_/\\  \n ( O.O )  \U0001f4e6\n  > ^ <\n /|   |\\\n(_|   |_)",
+        # Investigating...
+        "   /\\_/\\ \U0001f4e6\n  ( o.o )\n   > ^ <\n  /|   |\\\n (_|   |_)",
+        # Sniff sniff...
+        "   /\\_/\\\U0001f4e6\n  ( o.~ )\n   >sniff\n  /|   |\\\n (_|   |_)",
+        # One paw in...
+        "  _____\n  /\\_/\\|\n ( o.o )|\n  > ^ < |\n  |_____|",
+        # Climbing in...
+        "  _____\n /\\_/\\ |\n ( ^.^ )|\n  > ^ < |\n  |_____|",
+        # Squeezing in!
+        "  _____\n | /\\  |\n |(^.^)|\n | > < |\n  |_____|",
+        # If I fits...
+        "  _____\n |/\\_/\\|\n |( ^.^)|\n |     |\n  |_____|",
+        # Wiggle wiggle~
+        "  _____\n |/\\_/\\|\n |( ^w^)|\n |  ~  |\n  |_____|",
+        # I sits!!
+        "  _____\n |/\\_/\\|\n |( u.u)|\n |     |\n  |_____|",
+        # So comfy... zzz
+        "  _____\n |/\\_/\\|\n |( -.-)|zZ\n |     |\n  |_____|",
+    ]
+
+    BOWLING_FRAMES = [
+        # Picks up the ball
+        "  /\\_/\\  \n ( ^.^ )\U0001f3b3\n  > ^ <\n /|   |\\\n(_|   |_)",
+        # Lines up — pins ahead!
+        "  /\\_/\\        i\n ( -.- )\U0001f3b3   i i\n  > ^ <      i i i\n /|   |\\\n(_|   |_)",
+        # Winds up...
+        "  /\\_/\\        i\n\U0001f3b3( >.<)    i i\n  > ^ <      i i i\n /|   |\\\n(_|   |_)",
+        # ROLLS IT!
+        "  /\\_/\\        i\n ( >o< )/   i i\n  > ^ <      i i i\n /|   |\\\n(_|   |_)",
+        # Ball rolling toward pins...
+        "  /\\_/\\    \U0001f3b3  i\n ( o.o )     i i\n  > ^ <      i i i\n /|   |\\\n(_|   |_)",
+        # Almost there!
+        "  /\\_/\\      \U0001f3b3i\n ( O.O )     i i\n  > ^ <      i i i\n /|   |\\\n(_|   |_)",
+        # CRASH!! Pins scatter!
+        "  /\\_/\\    \U0001f4a5  \n ( ^o^ )   i \\ /i\n  > ^ <     /i\\ \n /|   |\\\n(_|   |_)",
+        # STRIKE!!!
+        "  /\\_/\\  \n ( ^o^ )  STRIKE!\n  > ^ <   \u2728\U0001f3b3\u2728\n /|   |\\\n(_|   |_)",
+        # Victory dance!
+        "  /\\_/\\  \n \\(^w^)/  \u2728\U0001f3b3\u2728\n  > ^ <\n /|   |\\\n(_|   |_)",
+    ]
+
+    LASER_FRAMES = [
+        # Spots the dot...
+        "  /\\_/\\  \n ( O.O )  \U0001f534\n  > ^ <\n /|   |\\\n(_|   |_)",
+        # Eyes lock on — butt wiggle
+        "  /\\_/\\   \U0001f534\n ( O.O )  \n  > ^ <\n  |   | \n  |___|  ",
+        # Dot moves left!
+        "\U0001f534 /\\_/\\  \n  ( O.O ) \n   > ^ <\n  /|   |\\\n (_|   |_)",
+        # POUNCE left!
+        "\U0001f534/\\_/\\  \n ( >o< ) \n  > ^ <\n /|   |\\\n(_|   |_)",
+        # Dot escapes right!
+        "  /\\_/\\  \n ( O.O )  \n  > ^ <  \U0001f534\n /|   |\\\n(_|   |_)",
+        # Chase right!
+        "      /\\_/\\\U0001f534\n     ( >.<) \n      > ^ <\n     /|   |\\\n    (_|   |_)",
+        # Dot on head?!
+        "  \U0001f534\\_/\\  \n ( O.O ) \n  > ^ <\n /|   |\\\n(_|   |_)",
+        # POUNCE on it!!
+        "  /\\_/\\  \n ( >w< )\U0001f534\n  > ^ <\n  |   | \n  |___|  ",
+        # ...where'd it go?
+        "  /\\_/\\  \n ( o.o ) ?\n  > ^ <\n /|   |\\\n(_|   |_)",
+    ]
+
+    DAISY_FRAMES = [
+        # Sniffs... what's that?
+        "  /\\_/\\  \n ( o.o ) \n  > ^ <\n /|   |\\\n(_|   |_)",
+        # A daisy appears!
+        "  /\\_/\\ \U0001f33c\n ( ^.^ )  \n  > ^ <\n /|   |\\\n(_|   |_)",
+        # More daisies blooming!
+        "\U0001f33c/\\_/\\ \U0001f33c\n ( ^o^ )  \n  > ^ <\n /|   |\\\n(_|   |_)",
+        # Flowers everywhere!
+        "\U0001f33c/\\_/\\ \U0001f33c\n ( ^o^ ) \U0001f338\n \U0001f33c> ^ <\n /|   |\\\n(_|   |_)",
+        # Happy dance with flowers
+        "\U0001f33c /\\_/\\\U0001f33c\n  \\(^w^)/\U0001f338\n \U0001f33c > ^ <\U0001f33c\n  /|   |\\\n (_|   |_)",
+        # Twirling in daisies!
+        "\U0001f338/\\_/\\ \U0001f33c\n\U0001f33c\\(^o^)/\U0001f338\n \U0001f33c> ^ <\U0001f33c\n /|   |\\\n(_|   |_)",
+        # Full bloom garden!
+        "\U0001f33c\U0001f338/\\_/\\\U0001f33c\U0001f338\n\U0001f33c( ^w^ )\U0001f33c\n\U0001f338 >w^ <\U0001f338\n /|   |\\\n(_|   |_)",
+        # Dancing in flowers~
+        "\U0001f338\U0001f33c/\\_/\\\U0001f338\U0001f33c\n\U0001f33c\\(^o^)/\U0001f338\n\U0001f33c >w^ <\U0001f33c\n /|   |\\\n(_|   |_)",
+        # Flower shower!!
+        "\U0001f33c\U0001f338\U0001f33c\U0001f338\U0001f33c\n\U0001f338/\\_/\\\U0001f33c\n ( ^w^ )\U0001f338\n\U0001f33c>w^ <\U0001f33c\n /|   |\\\U0001f338",
+        # Happy in the garden~
+        "\U0001f33c\U0001f338/\\_/\\\U0001f33c\U0001f338\n\U0001f33c( u.u )\U0001f33c\n\U0001f338 > ^ <\U0001f338\n /|   |\\\n(_|   |_)",
+    ]
+
+    CATNIP_FRAMES = [
+        "  /\\_/\\  \n ( O.O )!\n  > ^ <\n /|   |\\\n(_|   |_)",
+        "  /\\_/\\ \U0001f33f\n ( \u00d8.\u00d8 )\n  > o <\n /|   |\\\n(_|   |_)",
+        " ~/\\_/\\~ \n~( *.* )~\n  > W <\n /|   |\\\n(_|   |_)",
+        "    /\\_/\\\n   ( @.@ )\n    > ^ <\n   /|   |\\\n  (_|   |_)",
+        "  /\\_/\\  \n ( x.x ) \n  > ^ <\n  \\|   |/\n  (_|_|_)",
+        " ~/\\_/\\~ \n~( *.* )~\n ~> W <~\n /|   |\\\n(_|   |_)",
+        "/\\_/\\    \n( @.@ )  \n > ^ <\n/|   |\\\n(_|   |_)",
+        "     /\\_/\\\n    ( *.* )\n     > o <\n    /|   |\\\n   (_|   |_)",
+        "  /\\_/\\  \n ( @w@ ) \n  > ^ <\n /|   |\\\n(_|   |_)",
+        "  /\\_/\\  \n ( ^.^ )~\n  > ^ <\n /|   |\\\n(_|   |_)",
+    ]
+
     MESSAGES = {
         "idle":     "...",
         "pet":      "so nice~ \u2665",
@@ -244,6 +345,12 @@ class AsciiDogWidget:
         "spin":      "wheee~! \U0001f300",
         "play_dead": "... \U0001f480 (jk!!)",
         "sneeze":    "ACHOO!! \U0001f927",
+        "box":       "if I fits... \U0001f4e6",
+        "bowling":   "STRIKE!! \U0001f3b3",
+        "laser":     "RED DOT!! \U0001f534",
+        "daisy":     "flowers!! \U0001f33c\U0001f338",
+        "catnip":    "CATNIP!! \U0001f33f\U0001f4a8",
+        "catnip_earn": "earned catnip! \U0001f33f",
     }
 
     THOUGHTS = [
@@ -267,6 +374,7 @@ class AsciiDogWidget:
         "*knocks barcode off desk*",
         "if I fits, I sits \U0001f4e6",
         "~napping in a box~",
+        "is that... catnip? \U0001f33f",
     ]
 
     def __init__(self, parent: tk.Widget, name: str = "Bisa", on_rename=None):
@@ -283,6 +391,10 @@ class AsciiDogWidget:
         self._total_moveups = 0
         self._interactions_since_milestone = 0
         self._next_milestone_interval = random.randint(60, 100)
+
+        # Catnip reward system
+        self._catnip_redeemed = 0     # persisted — how many have been used
+        self._on_catnip_change = None  # callback for main.py to persist
 
         # Animation tuning
         self._speed_scale = 1.0
@@ -364,6 +476,18 @@ class AsciiDogWidget:
             fg=self._theme_stats,
         ).pack()
 
+        self.catnip_var = tk.StringVar(value="")
+        self._catnip_label = tk.Label(
+            self.frame,
+            textvariable=self.catnip_var,
+            font=("Segoe UI", 9, "bold"),
+            bg=self._theme_bg,
+            fg="#2d8a4e",
+            cursor="hand2",
+        )
+        self._catnip_label.pack(pady=(2, 0))
+        self._catnip_label.bind("<Button-1>", lambda _e: self._redeem_catnip())
+
         self._render_frame(self.IDLE_FRAMES[0])
         self._idle_loop()
 
@@ -443,6 +567,7 @@ class AsciiDogWidget:
         self.stats_var.set(
             f"{title}  |  pets:{self._total_pets}  treats:{self._total_treats}  moved:{self._total_moveups}"
         )
+        self._check_catnip_earned()
 
     def set_name(self, name: str):
         """Update the pet's display name."""
@@ -464,6 +589,65 @@ class AsciiDogWidget:
             # Notify main app to persist the change
             if self._on_rename:
                 self._on_rename(self._name)
+
+    # ------------------------------
+    # Catnip reward system
+    # ------------------------------
+    def _catnip_earned_total(self) -> int:
+        """Calculate total catnip earned from lifetime stats."""
+        from_interactions = (self._total_pets + self._total_treats) // 20
+        from_moveups = self._total_moveups // 10
+        return from_interactions + from_moveups
+
+    def _catnip_available(self) -> int:
+        """How many catnip treats are available to redeem."""
+        return max(0, self._catnip_earned_total() - self._catnip_redeemed)
+
+    def _update_catnip_display(self):
+        """Update the catnip label to show available treats."""
+        avail = self._catnip_available()
+        if avail > 0:
+            self.catnip_var.set(f"\U0001f33f catnip x{avail} — click to use!")
+        else:
+            self.catnip_var.set("")
+
+    def _check_catnip_earned(self):
+        """Check if a new catnip was just earned and flash a message."""
+        avail = self._catnip_available()
+        if avail > 0:
+            self._update_catnip_display()
+
+    def _redeem_catnip(self):
+        """Use one catnip treat — triggers wild animation."""
+        if self._catnip_available() <= 0:
+            return
+        if self._state not in ("idle", "pet", "happy"):
+            return
+        self._catnip_redeemed += 1
+        self._update_catnip_display()
+        self._cancel()
+        self._state = "catnip"
+        # Fast chaotic phase → slow dazed recovery → post-catnip zoomies (~2s)
+        zoomies_burst = self.ZOOMIES_FRAMES * 3  # ~1.7s of zoomies
+        self._run_anim(
+            self.CATNIP_FRAMES[:7],
+            self.MESSAGES["catnip"],
+            int(120 * self._speed_scale),
+            lambda: self._run_anim(
+                self.CATNIP_FRAMES[7:],
+                "whoa... \U0001f635\u200d\U0001f4ab",
+                int(300 * self._speed_scale),
+                lambda: self._run_anim(
+                    zoomies_burst,
+                    "ZOOMIES!! \u26a1\U0001f33f",
+                    int(140 * self._speed_scale),
+                    lambda: self._return_idle(),
+                ),
+            ),
+        )
+        # Notify main app to persist
+        if self._on_catnip_change:
+            self._on_catnip_change(self._catnip_redeemed)
 
     # ------------------------------
     # Animation engine
@@ -499,7 +683,7 @@ class AsciiDogWidget:
             self._run_anim(
                 self.LEGENDARY_FRAMES,
                 f"LEGENDARY {self._name.upper()}!! \u2605\u2605\u2605",
-                int(200 * self._speed_scale),
+                int(300 * self._speed_scale),
                 lambda: self._return_idle(),
             )
             return True
@@ -525,34 +709,34 @@ class AsciiDogWidget:
             msg = f"spooky {self._name} \U0001f383" if datetime.now().month == 10 else self.MESSAGES["winter"]
             self._cancel()
             self._state = "idle"
-            self._run_anim(self._seasonal_idle_frames, msg, int(420 * self._speed_scale),
+            self._run_anim(self._seasonal_idle_frames, msg, int(540 * self._speed_scale),
                            lambda: self._return_idle())
             return
 
         r = random.random()
         if r < 0.06:
             self._cancel(); self._state = "blink"
-            self._run_anim(self.BLINK_FRAMES, self.MESSAGES["blink"], int(220 * self._speed_scale),
+            self._run_anim(self.BLINK_FRAMES, self.MESSAGES["blink"], int(300 * self._speed_scale),
                            lambda: self._return_idle())
             return
         if r < 0.10:
             self._cancel(); self._state = "wag"
-            self._run_anim(self.WAG_FRAMES, self.MESSAGES["wag"], int(160 * self._speed_scale),
+            self._run_anim(self.WAG_FRAMES, self.MESSAGES["wag"], int(230 * self._speed_scale),
                            lambda: self._return_idle())
             return
         if r < 0.12:
             self._cancel(); self._state = "sleep"
-            self._run_anim(self.SLEEP_FRAMES, self.MESSAGES["sleep"], int(520 * self._speed_scale),
+            self._run_anim(self.SLEEP_FRAMES, self.MESSAGES["sleep"], int(640 * self._speed_scale),
                            lambda: self._return_idle())
             return
         if r < 0.14:
             self._cancel(); self._state = "zoomies"
-            self._run_anim(self.ZOOMIES_FRAMES, self.MESSAGES["zoomies"], int(140 * self._speed_scale),
+            self._run_anim(self.ZOOMIES_FRAMES, self.MESSAGES["zoomies"], int(200 * self._speed_scale),
                            lambda: self._return_idle())
             return
         if r < 0.24:
             self._cancel(); self._state = "stretch"
-            self._run_anim(self.STRETCH_FRAMES, self.MESSAGES["stretch"], int(550 * self._speed_scale),
+            self._run_anim(self.STRETCH_FRAMES, self.MESSAGES["stretch"], int(680 * self._speed_scale),
                            lambda: self._return_idle())
             return
 
@@ -583,8 +767,8 @@ class AsciiDogWidget:
             if self._maybe_milestone(self._total_treats):
                 return
 
-            self._run_anim(go_frames, self.MESSAGES["treat"], int(110 * self._speed_scale),
-                           lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(110 * self._speed_scale),
+            self._run_anim(go_frames, self.MESSAGES["treat"], int(160 * self._speed_scale),
+                           lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(160 * self._speed_scale),
                                                   lambda: self._return_idle()))
         except Exception as e:
             print(f"[moveup] Bisa click error: {e}")
@@ -603,8 +787,8 @@ class AsciiDogWidget:
         if self._maybe_milestone(self._total_pets):
             return
 
-        self._run_anim(self.PET_FRAMES, self.MESSAGES["pet"], int(180 * self._speed_scale),
-                       lambda: self._run_anim(self.HAPPY_FRAMES[:3], self.MESSAGES["pet"], int(180 * self._speed_scale),
+        self._run_anim(self.PET_FRAMES, self.MESSAGES["pet"], int(260 * self._speed_scale),
+                       lambda: self._run_anim(self.HAPPY_FRAMES[:3], self.MESSAGES["pet"], int(240 * self._speed_scale),
                                               lambda: self._return_idle()))
 
     def throw_treat_at_window_x(self, window_x: int, window_width: int):
@@ -628,8 +812,8 @@ class AsciiDogWidget:
         if self._maybe_milestone(self._total_treats):
             return
 
-        self._run_anim(go_frames, self.MESSAGES["treat"], int(200 * self._speed_scale),
-                       lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(200 * self._speed_scale),
+        self._run_anim(go_frames, self.MESSAGES["treat"], int(270 * self._speed_scale),
+                       lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(270 * self._speed_scale),
                                               lambda: self._return_idle()))
 
     # ------------------------------
@@ -647,7 +831,7 @@ class AsciiDogWidget:
         if self._maybe_milestone(self._total_pets):
             return
         self._run_anim(self.BELLY_FRAMES, self.MESSAGES["belly"],
-                       int(150 * self._speed_scale),
+                       int(240 * self._speed_scale),
                        lambda: self._return_idle())
 
     def _sneeze(self):
@@ -661,7 +845,7 @@ class AsciiDogWidget:
             self._total_pets += 1
             self._update_stats()
         self._run_anim(self.SNEEZE_FRAMES, self.MESSAGES["sneeze"],
-                       int(160 * self._speed_scale),
+                       int(240 * self._speed_scale),
                        lambda: self._return_idle())
 
     # --- Secret tricks (type while Bisa panel is focused) ---
@@ -672,6 +856,14 @@ class AsciiDogWidget:
         "roll":      ("spin",      "SPIN_FRAMES"),      # alias
         "play dead": ("play_dead", "PLAY_DEAD_FRAMES"),
         "dead":      ("play_dead", "PLAY_DEAD_FRAMES"),  # alias
+        "daisy":     ("daisy",     "DAISY_FRAMES"),
+        "flower":    ("daisy",     "DAISY_FRAMES"),      # alias
+        "zoomies":   ("zoomies",   "ZOOMIES_FRAMES"),
+        "zoom":      ("zoomies",   "ZOOMIES_FRAMES"),    # alias
+        "laser":     ("laser",     "LASER_FRAMES"),
+        "box":       ("box",       "BOX_FRAMES"),
+        "ryan":      ("bowling",   "BOWLING_FRAMES"),
+        "bowling":   ("bowling",   "BOWLING_FRAMES"),   # alias
     }
 
     def _on_key(self, event):
@@ -693,10 +885,10 @@ class AsciiDogWidget:
         self._total_pets += 1
         self._update_stats()
         self._run_anim(frames, self.MESSAGES[msg_key],
-                       int(170 * self._speed_scale),
-                       lambda: self._run_anim(self.HAPPY_FRAMES[:2],
+                       int(240 * self._speed_scale),
+                       lambda: self._run_anim(self.HAPPY_FRAMES[:4],
                                               "good kitty!! \u2728",
-                                              int(150 * self._speed_scale),
+                                              int(200 * self._speed_scale),
                                               lambda: self._return_idle()))
 
     def _on_hover(self, event=None):
@@ -706,7 +898,7 @@ class AsciiDogWidget:
             self._cancel()
             self._state = "sniff"
             self._run_anim(self.SNIFF_FRAMES, self.MESSAGES["sniff"],
-                           int(180 * self._speed_scale),
+                           int(260 * self._speed_scale),
                            lambda: self._return_idle())
 
     def _maybe_milestone(self, count: int) -> bool:
@@ -724,9 +916,9 @@ class AsciiDogWidget:
         self._run_anim(
             self.KUNTAL_FRAMES,
             msg,
-            int(140 * self._speed_scale),
-            lambda: self._run_anim(self.HAPPY_FRAMES[:2], msg,
-                                   int(130 * self._speed_scale),
+            int(220 * self._speed_scale),
+            lambda: self._run_anim(self.HAPPY_FRAMES[:3], msg,
+                                   int(200 * self._speed_scale),
                                    lambda: self._return_idle()),
         )
         return True
@@ -746,7 +938,7 @@ class AsciiDogWidget:
             msg, frames = "working late? \U0001f319", self.BLINK_FRAMES
         self._cancel()
         self._state = "idle"
-        self._run_anim(frames, msg, int(200 * self._speed_scale),
+        self._run_anim(frames, msg, int(300 * self._speed_scale),
                        lambda: self._return_idle())
 
     # ------------------------------
@@ -761,7 +953,7 @@ class AsciiDogWidget:
         if self._maybe_play_legendary():
             return
 
-        self._run_anim(self.HAPPY_FRAMES, self.MESSAGES["happy"], int(380 * self._speed_scale),
+        self._run_anim(self.HAPPY_FRAMES, self.MESSAGES["happy"], int(480 * self._speed_scale),
                        lambda: self._return_idle())
 
     def react_data_loaded(self, row_count: int = 0):
@@ -769,7 +961,7 @@ class AsciiDogWidget:
             return
         self._cancel()
         self._state = "loaded"
-        self._run_anim(self.LOAD_FRAMES, self.MESSAGES["loaded"], int(320 * self._speed_scale),
+        self._run_anim(self.LOAD_FRAMES, self.MESSAGES["loaded"], int(420 * self._speed_scale),
                        lambda: self._return_idle())
 
     def react_moveups(self, count: int):
@@ -778,8 +970,8 @@ class AsciiDogWidget:
         self._state = "moveup"
         msg = f"{count} SKU{'s' if count != 1 else ''} moved!! \U0001f4e6"
         self._run_anim(
-            self.ZOOMIES_FRAMES, msg, int(130 * self._speed_scale),
-            lambda: self._run_anim(self.HAPPY_FRAMES[:3], msg, int(160 * self._speed_scale),
+            self.ZOOMIES_FRAMES, msg, int(200 * self._speed_scale),
+            lambda: self._run_anim(self.HAPPY_FRAMES[:3], msg, int(220 * self._speed_scale),
                                    lambda: self._return_idle()),
         )
 
@@ -788,7 +980,7 @@ class AsciiDogWidget:
             return
         self._cancel()
         self._state = "excluded"
-        self._run_anim(self.EXCLUDED_FRAMES, self.MESSAGES["excluded"], int(420 * self._speed_scale),
+        self._run_anim(self.EXCLUDED_FRAMES, self.MESSAGES["excluded"], int(520 * self._speed_scale),
                        lambda: self._return_idle())
 
     def react_restored(self, count: int = 1):
@@ -796,7 +988,7 @@ class AsciiDogWidget:
             return
         self._cancel()
         self._state = "happy"
-        self._run_anim(self.HAPPY_FRAMES[:4], self.MESSAGES["restored"], int(400 * self._speed_scale),
+        self._run_anim(self.HAPPY_FRAMES[:4], self.MESSAGES["restored"], int(500 * self._speed_scale),
                        lambda: self._return_idle())
 
     def react_row_selected(self):
@@ -804,8 +996,8 @@ class AsciiDogWidget:
             return
         self._cancel()
         self._state = "alert"
-        self._run_anim(self.ALERT_FRAMES, self.MESSAGES["alert"], int(280 * self._speed_scale),
-                       lambda: self._run_anim(self.SNIFF_FRAMES, self.MESSAGES["sniff"], int(380 * self._speed_scale),
+        self._run_anim(self.ALERT_FRAMES, self.MESSAGES["alert"], int(380 * self._speed_scale),
+                       lambda: self._run_anim(self.SNIFF_FRAMES, self.MESSAGES["sniff"], int(460 * self._speed_scale),
                                               lambda: self._return_idle()))
 
     def react_kuntal(self, count: int = 1):
@@ -813,7 +1005,7 @@ class AsciiDogWidget:
             return
         self._cancel()
         self._state = "kuntal"
-        self._run_anim(self.KUNTAL_FRAMES, self.MESSAGES["kuntal"], int(340 * self._speed_scale),
+        self._run_anim(self.KUNTAL_FRAMES, self.MESSAGES["kuntal"], int(440 * self._speed_scale),
                        lambda: self._return_idle())
 
     def react_cleared(self):
@@ -821,7 +1013,7 @@ class AsciiDogWidget:
             return
         self._cancel()
         self._state = "cleared"
-        self._run_anim(self.CLEARED_FRAMES, self.MESSAGES["cleared"], int(400 * self._speed_scale),
+        self._run_anim(self.CLEARED_FRAMES, self.MESSAGES["cleared"], int(500 * self._speed_scale),
                        lambda: self._return_idle())
 
     # ------------------------------
@@ -833,18 +1025,18 @@ class AsciiDogWidget:
         self._cancel()
         self._state = "success"
         frames = self.SUCCESS_FRAMES + self.WAG_FRAMES
-        self._run_anim(frames, msg, int(170 * self._speed_scale), lambda: self._return_idle())
+        self._run_anim(frames, msg, int(250 * self._speed_scale), lambda: self._return_idle())
 
     def react_warning(self, msg: str = "uh oh\u2026 \u26a0\ufe0f"):
         if self._state != "idle":
             return
         self._cancel()
         self._state = "warning"
-        self._run_anim(self.WARNING_FRAMES, msg, int(220 * self._speed_scale), lambda: self._return_idle())
+        self._run_anim(self.WARNING_FRAMES, msg, int(320 * self._speed_scale), lambda: self._return_idle())
 
     def react_error(self, msg: str = "nope\u2026 \U0001f4a5"):
         if self._state != "idle":
             return
         self._cancel()
         self._state = "error"
-        self._run_anim(self.CONFUSED_FRAMES, msg, int(210 * self._speed_scale), lambda: self._return_idle())
+        self._run_anim(self.CONFUSED_FRAMES, msg, int(300 * self._speed_scale), lambda: self._return_idle())

@@ -11,7 +11,7 @@ import pandas as pd
 # ------------------------------
 # Single source constants
 # ------------------------------
-APP_VERSION = "4.0.0"
+APP_VERSION = "4.04"
 APP_NAME = "Konrad's Inventory Utilities"
 
 COLUMNS_TO_USE = ["Type", "Brand", "Product Name", "Package Barcode", "Room", "Qty On Hand"]
