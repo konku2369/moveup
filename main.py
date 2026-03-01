@@ -68,7 +68,7 @@ def export_excel(
 
     with pd.ExcelWriter(out, engine="openpyxl") as w:
         if not prio.empty:
-            prio.to_excel(w, sheet_name="Kuntal_Priority", index=False)
+            prio.to_excel(w, sheet_name="Priority", index=False)
         mu.to_excel(w, sheet_name="Move_Up_Items", index=False)
 
     return out
@@ -613,8 +613,8 @@ class AsciiDogWidget:
             if self._maybe_play_legendary():
                 return
 
-            self._run_anim(go_frames, self.MESSAGES["treat"], int(200 * self._speed_scale),
-                           lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(200 * self._speed_scale),
+            self._run_anim(go_frames, self.MESSAGES["treat"], int(110 * self._speed_scale),
+                           lambda: self._run_anim(self.RUN_BACK, self.MESSAGES["running"], int(110 * self._speed_scale),
                                                   lambda: self._return_idle()))
         except Exception as e:
             print(f"[moveup] Dog widget click error: {e}")
@@ -631,8 +631,8 @@ class AsciiDogWidget:
         if self._maybe_play_legendary():
             return
 
-        self._run_anim(self.PET_FRAMES, self.MESSAGES["pet"], int(480 * self._speed_scale),
-                       lambda: self._run_anim(self.HAPPY_FRAMES[:3], self.MESSAGES["pet"], int(480 * self._speed_scale),
+        self._run_anim(self.PET_FRAMES, self.MESSAGES["pet"], int(180 * self._speed_scale),
+                       lambda: self._run_anim(self.HAPPY_FRAMES[:3], self.MESSAGES["pet"], int(180 * self._speed_scale),
                                               lambda: self._return_idle()))
 
     def throw_treat_at_window_x(self, window_x: int, window_width: int):
@@ -803,8 +803,18 @@ class MoveUpGUI:
 
         self.filters_window: Optional[Toplevel] = None
 
+        # Lifetime Bisa stats (loaded from config before UI is built)
+        self._lifetime_pets: int = 0
+        self._lifetime_treats: int = 0
+
         self._load_config()
         self._build_ui()
+
+        # Push persisted totals into the widget now that it exists
+        self.dog_widget._total_pets = self._lifetime_pets
+        self.dog_widget._total_treats = self._lifetime_treats
+        self.dog_widget._update_stats()
+
         self._bind_window_treat()
         self._toggle_theme(initial=True)
         self._refresh_button_labels()
@@ -855,6 +865,9 @@ class MoveUpGUI:
             if isinstance(last_dir, str) and last_dir.strip() and os.path.isdir(last_dir):
                 self.last_import_dir = last_dir.strip()
 
+            self._lifetime_pets   = int(cfg.get("lifetime_pets",   0))
+            self._lifetime_treats = int(cfg.get("lifetime_treats", 0))
+
         except Exception as e:
             print(f"[moveup] Warning: could not load config ({self.config_path}): {e}")
 
@@ -877,6 +890,8 @@ class MoveUpGUI:
                 "excluded_barcodes": sorted(list(self.excluded_barcodes)),
                 "kuntal_priority_barcodes": sorted(list(self.kuntal_priority_barcodes)),
                 "active_columns": self.active_columns,
+                "lifetime_pets":   self.dog_widget._total_pets   if hasattr(self, "dog_widget") else self._lifetime_pets,
+                "lifetime_treats": self.dog_widget._total_treats if hasattr(self, "dog_widget") else self._lifetime_treats,
             }
             tmp = self.config_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -929,6 +944,27 @@ class MoveUpGUI:
                     "map": {"background": [("selected", "#bfb0e6")], "foreground": [("selected", "#000000")]}
                 },
                 "TCheckbutton": {"configure": {"background": "#ede8f7"}},
+                "TNotebook": {
+                    "configure": {"background": "#ede8f7", "tabmargins": [2, 4, 2, 0]},
+                },
+                "TNotebook.Tab": {
+                    "configure": {
+                        "background": "#b8aad8",   # unselected: darker lavender
+                        "foreground": "#5a3f8a",   # unselected: muted purple
+                        "padding": [10, 4],
+                    },
+                    "map": {
+                        "background": [
+                            ("selected", "#f5f2fb"),  # selected: bright near-white, matches treeview
+                            ("active",   "#cfc3ea"),  # hover
+                        ],
+                        "foreground": [
+                            ("selected", "#3b1f6e"),  # selected: dark bold purple
+                            ("active",   "#4a2a80"),
+                        ],
+                        "expand": [("selected", [2, 3, 2, 0])],  # lifts active tab up
+                    },
+                },
             }
         )
 
@@ -985,10 +1021,11 @@ class MoveUpGUI:
         btn_audit.pack(side="left", padx=4)
         self._register_button(btn_audit, "Audit PDFs…")
 
-        ttk.Checkbutton(
-            btn_row, text="Kawaii mode",
-            variable=self.kawaii_var, command=self._toggle_theme,
-        ).pack(side="left", padx=8)
+        btn_kawaii_settings_main = ttk.Button(
+            btn_row, text="Kawaii PDF Settings…", command=self.open_kawaii_settings,
+        )
+        btn_kawaii_settings_main.pack(side="left", padx=4)
+        self._register_button(btn_kawaii_settings_main, "Kawaii PDF Settings…")
 
         # Advanced toggle (ANCHOR target for frm_advanced)
         self.frm_adv_toggle = ttk.Frame(frm_controls)
@@ -1016,15 +1053,15 @@ class MoveUpGUI:
         self._register_button(btn_folder, "Open Output Folder")
 
         ttk.Checkbutton(
+            adv_row, text="Kawaii mode",
+            variable=self.kawaii_var, command=self._toggle_theme,
+        ).pack(side="left", padx=6)
+
+        ttk.Checkbutton(
             adv_row, text="Printer B/W",
             variable=self.printer_bw_var, command=self._save_config,
         ).pack(side="left", padx=6)
 
-        btn_kawaii_settings = ttk.Button(
-            adv_row, text="Kawaii PDF Settings…", command=self.open_kawaii_settings,
-        )
-        btn_kawaii_settings.pack(side="left", padx=4)
-        self._register_button(btn_kawaii_settings, "Kawaii PDF Settings…")
 
         # Items per page (ANCHOR)
         self.frm_page = ttk.Frame(frm_controls)
@@ -1045,7 +1082,7 @@ class MoveUpGUI:
         self.moveupcount_var = StringVar(value="Move-Up items: 0")
         ttk.Label(frm_controls, textvariable=self.moveupcount_var, anchor="w").pack(fill="x")
 
-        self.kuntalcount_var = StringVar(value="Kuntal's priority items: 0")
+        self.kuntalcount_var = StringVar(value="Priority! items: 0")
         ttk.Label(frm_controls, textvariable=self.kuntalcount_var, anchor="w").pack(fill="x")
 
         self.filters_summary_var = StringVar(value="Filters: default")
@@ -1067,9 +1104,26 @@ class MoveUpGUI:
         self.tab_all = ttk.Frame(self.nb)
 
         self.nb.add(self.tab_moveup, text="Move-Up List")
-        self.nb.add(self.tab_kuntal, text="Kuntal's Priority")
+        self.nb.add(self.tab_kuntal, text="Priority!")
         self.nb.add(self.tab_excluded, text="Excluded / Removed")
         self.nb.add(self.tab_all, text="All Items")
+
+        # Colored dot indicators on each tab (PhotoImage is the only reliable
+        # cross-platform way to get per-tab color accents in ttk.Notebook)
+        def _make_tab_dot(color: str) -> tk.PhotoImage:
+            img = tk.PhotoImage(width=10, height=10)
+            img.put(color, to=(1, 1, 9, 9))
+            return img
+
+        self._tab_dot_moveup   = _make_tab_dot("#4a9fd4")   # steel blue
+        self._tab_dot_kuntal   = _make_tab_dot("#e8a020")   # amber
+        self._tab_dot_excluded = _make_tab_dot("#d46060")   # soft red
+        self._tab_dot_all      = _make_tab_dot("#9988cc")   # muted purple
+
+        self.nb.tab(self.tab_moveup,   image=self._tab_dot_moveup,   compound="left")
+        self.nb.tab(self.tab_kuntal,   image=self._tab_dot_kuntal,   compound="left")
+        self.nb.tab(self.tab_excluded, image=self._tab_dot_excluded, compound="left")
+        self.nb.tab(self.tab_all,      image=self._tab_dot_all,      compound="left")
 
         self.tree = ttk.Treeview(self.tab_moveup, columns=tuple(self.active_columns), show="headings", height=18)
         self._configure_tree_columns(self.tree, self.active_columns)
@@ -1080,6 +1134,7 @@ class MoveUpGUI:
         self.k_tree = ttk.Treeview(self.tab_kuntal, columns=tuple(COLUMNS_TO_USE), show="headings", height=18)
         self._configure_tree_columns(self.k_tree, COLUMNS_TO_USE)
         self.k_tree.pack(fill="both", expand=True)
+        self.k_tree.bind("<Double-Button-1>", self._kuntal_tree_double_click)
 
         self.x_tree = ttk.Treeview(self.tab_excluded, columns=tuple(COLUMNS_TO_USE), show="headings", height=18)
         self._configure_tree_columns(self.x_tree, COLUMNS_TO_USE)
@@ -1103,6 +1158,7 @@ class MoveUpGUI:
         self.all_tree.configure(yscrollcommand=all_sb.set)
         self.all_tree.pack(side="left", fill="both", expand=True)
         all_sb.pack(side="right", fill="y")
+        self.all_tree.bind("<Double-Button-1>", self._all_tree_double_click)
 
         self.all_search_var.trace_add("write", lambda *_: self._render_all_tree(self.current_df))
 
@@ -1122,17 +1178,17 @@ class MoveUpGUI:
 
         ttk.Separator(frm_remove, orient="vertical").pack(side="left", fill="y", padx=8)
 
-        btn_kuntal = ttk.Button(frm_remove, text="Toggle Kuntal's Priority", command=self._toggle_kuntal_selected)
+        btn_kuntal = ttk.Button(frm_remove, text="Toggle Priority!", command=self._toggle_kuntal_selected)
         btn_kuntal.pack(side="left", padx=4)
-        self._register_button(btn_kuntal, "Toggle Kuntal's Priority")
+        self._register_button(btn_kuntal, "Toggle Priority!")
 
         btn_manual = ttk.Button(frm_remove, text="Manual Add…", command=self._manual_add_dialog)
         btn_manual.pack(side="left", padx=4)
         self._register_button(btn_manual, "Manual Add…")
 
-        btn_clear_k = ttk.Button(frm_remove, text="Clear Kuntal's List", command=self._clear_kuntal_list)
+        btn_clear_k = ttk.Button(frm_remove, text="Clear Priority! List", command=self._clear_kuntal_list)
         btn_clear_k.pack(side="left", padx=4)
-        self._register_button(btn_clear_k, "Clear Kuntal's List")
+        self._register_button(btn_clear_k, "Clear Priority! List")
 
         self.diag_var = StringVar(value="")
         ttk.Label(
@@ -1375,9 +1431,18 @@ class MoveUpGUI:
     def _update_moveupcount(self, df: Optional[pd.DataFrame]):
         n = 0 if df is None else len(df)
         self.moveupcount_var.set(f"Move-Up items: {n}")
+        try:
+            self.nb.tab(self.tab_moveup, text=f"Move-Up ({n})")
+        except Exception:
+            pass
 
     def _update_kuntalcount(self):
-        self.kuntalcount_var.set(f"Kuntal's priority items: {len(self.kuntal_priority_barcodes)}")
+        n = len(self.kuntal_priority_barcodes)
+        self.kuntalcount_var.set(f"Priority! items: {n}")
+        try:
+            self.nb.tab(self.tab_kuntal, text=f"Priority! ({n})")
+        except Exception:
+            pass
 
     # ------------------------------
     # Window-wide treat throwing
@@ -1564,7 +1629,7 @@ class MoveUpGUI:
                     "Change METRC Column",
                     "The METRC source column is used as the Package Barcode key.\n\n"
                     "Changing it will re-map all barcodes and may clear your current\n"
-                    "excluded / Kuntal priority lists if the barcodes no longer match.\n\n"
+                    "excluded / Priority! lists if the barcodes no longer match.\n\n"
                     "Are you sure you want to change it?",
                     parent=win,
                 )
@@ -2394,7 +2459,7 @@ class MoveUpGUI:
     def _toggle_kuntal_selected(self):
         sel = self.tree.selection()
         if not sel:
-            messagebox.showinfo("Kuntal's Priority", "Select row(s) first.")
+            messagebox.showinfo("Priority!", "Select row(s) first.")
             return
         idx_bar = self.active_columns.index("Package Barcode")
         toggled = 0
@@ -2412,7 +2477,7 @@ class MoveUpGUI:
             toggled += 1
         self._update_kuntalcount()
         self._recompute_from_current()
-        self.status.set(f"Toggled Kuntal's Priority on {toggled} item(s).")
+        self.status.set(f"Toggled Priority! on {toggled} item(s).")
         self._save_config()
         if toggled and hasattr(self, "dog_widget"):
             self.dog_widget.react_kuntal(toggled)
@@ -2421,10 +2486,52 @@ class MoveUpGUI:
         self.kuntal_priority_barcodes.clear()
         self._update_kuntalcount()
         self._recompute_from_current()
-        self.status.set("Cleared Kuntal's Priority list.")
+        self.status.set("Cleared Priority! list.")
         self._save_config()
         if hasattr(self, "dog_widget"):
             self.dog_widget.react_cleared()
+
+    def _all_tree_double_click(self, event):
+        iid = self.all_tree.identify_row(event.y)
+        if not iid:
+            return
+        vals = self.all_tree.item(iid, "values")
+        if not vals:
+            return
+        try:
+            bc_idx = list(COLUMNS_TO_USE).index("Package Barcode")
+            bc = str(vals[bc_idx]).strip()
+        except (ValueError, IndexError):
+            return
+        if not bc:
+            return
+        self.kuntal_priority_barcodes.add(bc)
+        self._update_kuntalcount()
+        self._recompute_from_current()
+        self.status.set(f"Added to Priority!: …{bc[-6:]}")
+        self._save_config()
+        if hasattr(self, "dog_widget"):
+            self.dog_widget.react_kuntal(1)
+
+    def _kuntal_tree_double_click(self, event):
+        iid = self.k_tree.identify_row(event.y)
+        if not iid:
+            return
+        vals = self.k_tree.item(iid, "values")
+        if not vals:
+            return
+        try:
+            bc_idx = list(COLUMNS_TO_USE).index("Package Barcode")
+            bc = str(vals[bc_idx]).strip()
+        except (ValueError, IndexError):
+            return
+        if not bc or bc not in self.kuntal_priority_barcodes:
+            return
+        self.kuntal_priority_barcodes.discard(bc)
+        self._update_kuntalcount()
+        self._recompute_from_current()
+        self.status.set(f"Removed from Priority!: …{bc[-6:]}")
+        self._save_config()
 
     # ------------------------------
     # Excluded single-click restore
@@ -2514,7 +2621,7 @@ class MoveUpGUI:
             return
 
         win = Toplevel(self.root)
-        win.title("Manual Add to Kuntal's Priority")
+        win.title("Manual Add to Priority!")
         win.geometry("920x620")
         win.transient(self.root)
         win.grab_set()
@@ -2576,7 +2683,7 @@ class MoveUpGUI:
                     added += 1
             self._update_kuntalcount()
             self._recompute_from_current()
-            self.status.set(f"Manual added {added} item(s) to Kuntal's Priority.")
+            self.status.set(f"Manual added {added} item(s) to Priority!")
             self._save_config()
             win.destroy()
 

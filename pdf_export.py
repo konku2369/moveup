@@ -495,7 +495,7 @@ def export_moveup_pdf_paginated(
     back_raw = rest[room_lower == "backstock"].copy() if not rest.empty else pd.DataFrame(columns=COLUMNS_TO_USE)
     other_raw = rest[room_lower != "backstock"].copy() if not rest.empty else pd.DataFrame(columns=COLUMNS_TO_USE)
 
-    title_kuntal = "Kuntal's Priority List — Ultra Priority"
+    title_kuntal = "Priority!"
     title_back = "Move-Up Inventory List Backstock — Priority!"
     title_other = "Move-Up Inventory List New Deliveries"
 
