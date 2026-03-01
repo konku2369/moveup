@@ -489,44 +489,31 @@ def export_moveup_pdf_paginated(
     prio = priority_df.copy() if priority_df is not None else pd.DataFrame(columns=COLUMNS_TO_USE)
     rest = move_up_df.loc[:, COLUMNS_TO_USE].copy() if not move_up_df.empty else pd.DataFrame(columns=COLUMNS_TO_USE)
 
+    # Remove priority items from regular list to avoid duplicates
     if not prio.empty and not rest.empty:
         prio_bcs = set(prio["Package Barcode"].astype(str).str.strip().tolist())
         rest = rest[~rest["Package Barcode"].astype(str).str.strip().isin(prio_bcs)].copy()
 
+    # Mark priority items with ⭐ prefix on Product Name
+    if not prio.empty:
+        prio["Product Name"] = "\u2b50 " + prio["Product Name"].astype(str)
+
+    # Split regular items by room: backstock first, then other rooms
     room_lower = rest["Room"].astype(str).str.strip().str.lower() if not rest.empty else pd.Series([], dtype=str)
     back_raw = rest[room_lower == "backstock"].copy() if not rest.empty else pd.DataFrame(columns=COLUMNS_TO_USE)
     other_raw = rest[room_lower != "backstock"].copy() if not rest.empty else pd.DataFrame(columns=COLUMNS_TO_USE)
 
-    title_kuntal = "Priority!"
-    title_back = "Move-Up Inventory List Backstock — Priority!"
-    title_other = "Move-Up Inventory List New Deliveries"
+    # Combine into one list: priority at top → backstock → other rooms
+    combined = pd.concat([prio, back_raw, other_raw], ignore_index=True)
 
-    if not prio.empty:
-        prio_pdf_df = _prep_moveup_table_df(prio)
-        for start in range(0, len(prio_pdf_df), items_per_page):
-            chunk = prio_pdf_df.iloc[start:start + items_per_page]
-            elements += _build_moveup_page_elements(chunk, title_kuntal, kawaii_pdf, printer_bw)
-            if start + items_per_page < len(prio_pdf_df):
-                elements.append(PageBreak())
-        if (not back_raw.empty) or (not other_raw.empty):
-            elements.append(PageBreak())
+    title = "Move-Up Inventory List"
 
-    if not back_raw.empty:
-        back_pdf_df = _prep_moveup_table_df(back_raw)
-        for start in range(0, len(back_pdf_df), items_per_page):
-            chunk = back_pdf_df.iloc[start:start + items_per_page]
-            elements += _build_moveup_page_elements(chunk, title_back, kawaii_pdf, printer_bw)
-            if start + items_per_page < len(back_pdf_df):
-                elements.append(PageBreak())
-
-    if not other_raw.empty:
-        if not back_raw.empty:
-            elements.append(PageBreak())
-        other_pdf_df = _prep_moveup_table_df(other_raw)
-        for start in range(0, len(other_pdf_df), items_per_page):
-            chunk = other_pdf_df.iloc[start:start + items_per_page]
-            elements += _build_moveup_page_elements(chunk, title_other, kawaii_pdf, printer_bw)
-            if start + items_per_page < len(other_pdf_df):
+    if not combined.empty:
+        combined_pdf_df = _prep_moveup_table_df(combined)
+        for start in range(0, len(combined_pdf_df), items_per_page):
+            chunk = combined_pdf_df.iloc[start:start + items_per_page]
+            elements += _build_moveup_page_elements(chunk, title, kawaii_pdf, printer_bw)
+            if start + items_per_page < len(combined_pdf_df):
                 elements.append(PageBreak())
 
     prof = _kawaii_profile_from_settings(printer_bw) if kawaii_pdf else None
