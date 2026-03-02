@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import main\")",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"import main; import mainExpiring\")",
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''bisa.py'', doraise=True\\); print\\(''bisa.py OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''main.py'', doraise=True\\); print\\(''main.py OK''\\)\")",
+      "Bash(python -c \"from bisa import AsciiDogWidget; print\\(f''AsciiDogWidget imported OK, {len\\(AsciiDogWidget.IDLE_FRAMES\\)} idle frames''\\)\")",
+      "Bash(python3 -m py_compile main.py bisa.py data_core.py kawaii_settings.py)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''bisa.py'', doraise=True\\); py_compile.compile\\(''main.py'', doraise=True\\); print\\(''Both files OK''\\)\")",
+      "Bash(python _add_body.py)",
+      "Bash(python -c \"from bisa import AsciiDogWidget; print\\(''Import OK''\\)\")",
+      "Bash(python -c \"from bisa import AsciiDogWidget; print\\(''bisa.py import OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py''\\).read\\(\\)\\); print\\(''main.py syntax OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''main.py syntax OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''pdf_export.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''pdf_export.py syntax OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''pdf_export.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''main.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(git add main.py)",
+      "Bash(git commit:*)",
+      "Bash(python -c \"from bisa import AsciiDogWidget; print\\(''OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''bisa.py'', doraise=True\\); print\\(''OK''\\)\")"
+    ]
+  }
+}
