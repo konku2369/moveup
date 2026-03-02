@@ -1,6 +1,6 @@
 {
   "preset": "Extra",
-  "printer_bw": false,
+  "printer_bw": true,
   "bg_hue_pct": 100,
   "bg_intensity_pct": 300,
   "elem_intensity_pct": 300,

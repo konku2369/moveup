@@ -53,20 +53,6 @@ COL_PATTERNS = {
 DEFAULT_EXCLUSIONS = ["accessory", "accessories"]
 
 # -------- Theme --------
-THEME = {
-    "bg": "#EEEAF8",
-    "panel": "#E5E1F4",
-    "accent": "#7251A8",
-    "accent_soft": "#DDD6F0",
-    "text": "#1F2328",
-    "select_bg": "#C3B1E8",
-    "select_fg": "#1F2328",
-    "btn_bg": "#EDEAF7",
-    "btn_bg_active": "#DED9F0",
-    "btn_text": "#1F2328",
-    "btn_border": "#7251A8",
-}
-
 MOVEUP_THEME = {
     "bg": "#EEEAF8",
     "label_fg": "#3A2869",
@@ -111,8 +97,8 @@ def open_file_with_default_app(path: str):
             subprocess.run(["open", path], check=False)
         else:
             subprocess.run(["xdg-open", path], check=False)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[expiring] Could not auto-open file: {e}")
 
 
 def metrc_last6(val) -> str:
@@ -213,7 +199,7 @@ def build_dynamic_buckets(max_days: int) -> list[tuple[str, int, int]]:
             break
         buckets.append((label, lo, min(hi, max_days)))
 
-    if max_days <= 60:
+    if max_days <= 30:
         return buckets
 
     start = 31
@@ -436,7 +422,7 @@ class DataModel:
         if ex:
             cols_for_ex = [c for c in [self.col_category, self.col_metrc6, self.col_product] if c and c in df.columns]
             if cols_for_ex:
-                blob = df[cols_for_ex].astype(str).agg(" | ".join, axis=1).str.lower()
+                blob = df[cols_for_ex].fillna("").astype(str).agg(" | ".join, axis=1).str.lower()
                 ex_mask = pd.Series(False, index=df.index)
                 for k in ex:
                     ex_mask = ex_mask | blob.str.contains(re.escape(k), na=False)
@@ -451,7 +437,7 @@ class DataModel:
         if q:
             text_cols = [c for c in df.columns if df[c].dtype == "object"]
             if text_cols:
-                big = df[text_cols].astype(str).agg(" | ".join, axis=1).str.lower()
+                big = df[text_cols].fillna("").astype(str).agg(" | ".join, axis=1).str.lower()
                 df = df.loc[big.str.contains(q, na=False)]
 
         df["_sortkey"] = df["Days To Expire"].fillna(10**9)
@@ -722,8 +708,23 @@ class App(tk.Toplevel):
 
         self._build_ui()
         self.apply_subtle_theme()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _trunc_map(self) -> dict[str, int]:
+    def _on_close(self):
+        """Cancel pending debounce timers before destroying the window."""
+        if self._debounce_job is not None:
+            try:
+                self.after_cancel(self._debounce_job)
+            except Exception:
+                pass
+            self._debounce_job = None
+        self.destroy()
+
+    def _set_export_buttons_state(self, state: str):
+        for btn in getattr(self, "_export_buttons", []):
+            btn.configure(state=state)
+
+    def _build_trunc_map(self) -> dict[str, int]:
         m = {}
         if self.model.col_product:
             m[self.model.col_product] = TRUNCATE_PRODUCT_TO
@@ -807,9 +808,13 @@ class App(tk.Toplevel):
         ttk.Checkbutton(top, text="Kawaii PDF", variable=self.pdf_kawaii_var)\
             .pack(side="left", padx=(12, 0))
 
-        ttk.Button(top, text="Export PDF (Current Tab)", command=self.export_pdf).pack(side="right")
-        ttk.Button(top, text="Export Excel (Current Tab)", command=self.export_xlsx).pack(side="right", padx=(0, 8))
-        ttk.Button(top, text="Export CSV (Current Tab)", command=self.export_csv).pack(side="right", padx=(0, 8))
+        _btn_pdf = ttk.Button(top, text="Export PDF (Current Tab)", command=self.export_pdf, state="disabled")
+        _btn_pdf.pack(side="right")
+        _btn_xlsx = ttk.Button(top, text="Export Excel (Current Tab)", command=self.export_xlsx, state="disabled")
+        _btn_xlsx.pack(side="right", padx=(0, 8))
+        _btn_csv = ttk.Button(top, text="Export CSV (Current Tab)", command=self.export_csv, state="disabled")
+        _btn_csv.pack(side="right", padx=(0, 8))
+        self._export_buttons = [_btn_pdf, _btn_xlsx, _btn_csv]
 
         ttk.Label(self, textvariable=self.info_var).pack(fill="x", padx=10, pady=(0, 6))
 
@@ -924,6 +929,7 @@ class App(tk.Toplevel):
                 f"Available: '{self.model.col_available or 'N/A'}'"
             )
             self.apply_filter()
+            self._set_export_buttons_state("normal")
         except Exception as e:
             messagebox.showerror("Load Error", str(e))
 
@@ -937,14 +943,15 @@ class App(tk.Toplevel):
             )
             for loc in locations:
                 self.location_listbox.insert(tk.END, loc)
-            self._select_all_locations()
+            self._select_all_locations(trigger_filter=False)
             self.location_frame.pack(fill="x", before=self.nb)
         else:
             self.location_frame.pack_forget()
 
-    def _select_all_locations(self):
+    def _select_all_locations(self, trigger_filter=True):
         self.location_listbox.selection_set(0, tk.END)
-        self.apply_filter()
+        if trigger_filter:
+            self.apply_filter()
 
     def _get_selected_locations(self) -> list[str] | None:
         """Return selected room names, or None when all (or none) are selected — meaning no filter."""
@@ -959,7 +966,10 @@ class App(tk.Toplevel):
     def _debounce(self, ms: int, func):
         if self._debounce_job is not None:
             self.after_cancel(self._debounce_job)
-        self._debounce_job = self.after(ms, func)
+        def _run():
+            self._debounce_job = None
+            func()
+        self._debounce_job = self.after(ms, _run)
 
     def _current_exclusions(self) -> list[str]:
         extras = _clean_keyword_list(self.exclusions_var.get())
@@ -984,7 +994,7 @@ class App(tk.Toplevel):
         if df is None:
             return
 
-        trunc_map = self._trunc_map()
+        trunc_map = self._build_trunc_map()
 
         preferred = []
         for key in ["location", "category"]:
@@ -1024,6 +1034,7 @@ class App(tk.Toplevel):
         else:
             self.action_df = None
             self.action_cols = []
+            self.action_table.render(pd.DataFrame(columns=self.action_cols or []), self.action_cols or [])
 
         buckets = build_dynamic_buckets(days)
         summary_df, bucket_map = self.model.build_bucket_summary(
@@ -1090,7 +1101,7 @@ class App(tk.Toplevel):
         cols = [c for c in cols if c in df.columns]
 
         self.bucket_detail_cols = cols
-        self.bucket_detail_table.render(df, cols, trunc_map=self._trunc_map())
+        self.bucket_detail_table.render(df, cols, trunc_map=self._build_trunc_map())
 
     def _current_export_df_and_cols(self):
         if self.model.df_filtered is None:
@@ -1115,26 +1126,34 @@ class App(tk.Toplevel):
         return df, cols, "Sweed Expiration View"
 
     def export_csv(self):
-        df, _, _ = self._current_export_df_and_cols()
+        df, cols, _ = self._current_export_df_and_cols()
         if df is None or df.empty:
             messagebox.showinfo("Export", "Nothing to export.")
             return
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
         if not path:
             return
-        df.to_csv(path, index=False)
-        messagebox.showinfo("Export", f"Saved:\n{path}")
+        export_cols = [c for c in cols if c in df.columns] if cols else list(df.columns)
+        try:
+            df[export_cols].to_csv(path, index=False)
+            messagebox.showinfo("Export", f"Saved:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Could not save file:\n{e}")
 
     def export_xlsx(self):
-        df, _, _ = self._current_export_df_and_cols()
+        df, cols, _ = self._current_export_df_and_cols()
         if df is None or df.empty:
             messagebox.showinfo("Export", "Nothing to export.")
             return
         path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")])
         if not path:
             return
-        df.to_excel(path, index=False)
-        messagebox.showinfo("Export", f"Saved:\n{path}")
+        export_cols = [c for c in cols if c in df.columns] if cols else list(df.columns)
+        try:
+            df[export_cols].to_excel(path, index=False)
+            messagebox.showinfo("Export", f"Saved:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Could not save file:\n{e}")
 
     def export_pdf(self):
         df, cols, title = self._current_export_df_and_cols()

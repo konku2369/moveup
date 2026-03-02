@@ -322,8 +322,8 @@ def automap_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
             if s in ("", "nan", "NaT", "None"):
                 return ""
             try:
-                # Sweed export format: MM/DD/YYYY HH:MM:SS AM/PM (24h hour with AM/PM marker)
-                return pd.to_datetime(s, format="%m/%d/%Y %H:%M:%S %p").strftime("%Y-%m-%d")
+                # Sweed export format: MM/DD/YYYY HH:MM:SS AM/PM (12h hour with AM/PM marker)
+                return pd.to_datetime(s, format="%m/%d/%Y %I:%M:%S %p").strftime("%Y-%m-%d")
             except Exception:
                 try:
                     return pd.to_datetime(s, format="mixed").strftime("%Y-%m-%d")
@@ -387,11 +387,13 @@ def compute_moveup_from_df(
         return pd.DataFrame(columns=COLUMNS_TO_USE), diag
 
     work = df.copy()
+
+    # Drop rows with missing critical fields BEFORE str conversion (astype(str) turns NaN → "nan")
+    work = work.dropna(subset=["Product Name", "Brand", "Package Barcode", "Room"]).copy()
+
     for c in ["Product Name", "Brand", "Package Barcode", "Room", "Type"]:
         if c in work.columns:
             work[c] = work[c].astype(str)
-
-    work = work.dropna(subset=["Product Name", "Brand", "Package Barcode", "Room"]).copy()
     diag["after_dropna"] = int(len(work))
 
     if brand_filter:

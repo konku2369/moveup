@@ -129,23 +129,30 @@ class KawaiiPreviewDialog:
             bg_hue_pct=int(self.bg_hue_pct.get()),
             bg_intensity_pct=int(self.bg_intensity_pct.get()),
             elem_intensity_pct=int(self.elem_intensity_pct.get()),
+            # Preserve stars tuning from loaded settings (no UI slider for these)
+            stars_base=self.settings.stars_base,
+            stars_max_extra=self.settings.stars_max_extra,
         )
         s.clamp_self()
         return s
 
     def _save_now(self):
+        if getattr(self, "_resetting", False):
+            return
         s = self._to_settings()
         save_settings(s)
         self.settings = s
         self.redraw()
 
     def _reset(self):
+        self._resetting = True
         s = reset_defaults()
         self.printer_bw.set(s.printer_bw)
         self.preset_var.set(s.preset)
         self.bg_hue_pct.set(s.bg_hue_pct)
         self.bg_intensity_pct.set(s.bg_intensity_pct)
         self.elem_intensity_pct.set(s.elem_intensity_pct)
+        self._resetting = False
         save_settings(self._to_settings())
         self.redraw()
 

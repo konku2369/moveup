@@ -337,9 +337,9 @@ def _prep_moveup_table_df(df: pd.DataFrame) -> pd.DataFrame:
     pdf_df = df.loc[:, COLUMNS_TO_USE].copy()
     # Data is already sorted by the caller; no need to re-sort here.
 
-    pdf_df["Room"] = pdf_df["Room"].astype(str).fillna("").map(_fmt_room)
-    pdf_df["Type"] = pdf_df["Type"].astype(str).fillna("").map(_fmt_type)
-    pdf_df["Product Name"] = pdf_df["Product Name"].astype(str).fillna("").map(_fmt_product)
+    pdf_df["Room"] = pdf_df["Room"].fillna("").astype(str).map(_fmt_room)
+    pdf_df["Type"] = pdf_df["Type"].fillna("").astype(str).map(_fmt_type)
+    pdf_df["Product Name"] = pdf_df["Product Name"].fillna("").astype(str).map(_fmt_product)
     pdf_df["Package Barcode"] = pdf_df["Package Barcode"].map(
         lambda x: _fmt_barcode_tail(x, int(PDF_PROFILE["barcode_tail_moveup"]))
     )
@@ -566,16 +566,16 @@ def export_audit_pdfs(
         work["Size"] = ""
 
     # Normalize
-    work["Distributor"] = work["Distributor"].astype(str).fillna("").str.strip()
+    work["Distributor"] = work["Distributor"].fillna("").astype(str).str.strip()
     work.loc[work["Distributor"] == "", "Distributor"] = "Unknown Distributor"
 
-    work["Store"] = work["Store"].astype(str).fillna("").str.strip()
+    work["Store"] = work["Store"].fillna("").astype(str).str.strip()
     work.loc[work["Store"] == "", "Store"] = (default_store.strip() or "Store")
 
-    work["Room"] = work["Room"].astype(str).fillna("").str.strip()
+    work["Room"] = work["Room"].fillna("").astype(str).str.strip()
     work.loc[work["Room"] == "", "Room"] = (default_room.strip() or "Sales Floor")
 
-    work["SizeFull"] = work["Size"].astype(str).fillna("").str.strip()
+    work["SizeFull"] = work["Size"].fillna("").astype(str).str.strip()
 
     # Sorting/grouping
     if sort_mode == "distributor_type_size_product":
@@ -596,9 +596,9 @@ def export_audit_pdfs(
         s = str(v or "").strip()
         return (s[:type_trunc_len] + "…") if len(s) > int(type_trunc_len) else s
 
-    work["TypeDisp"] = work["Type"].astype(str).fillna("").map(_type_disp)
-    work["ProductDisp"] = work["Product Name"].astype(str).fillna("").map(lambda v: _fmt_product(v))
-    work["MetrcLast8"] = work["Package Barcode"].astype(str).fillna("").map(
+    work["TypeDisp"] = work["Type"].fillna("").astype(str).map(_type_disp)
+    work["ProductDisp"] = work["Product Name"].fillna("").astype(str).map(lambda v: _fmt_product(v))
+    work["MetrcLast8"] = work["Package Barcode"].fillna("").astype(str).map(
         lambda v: _fmt_barcode_tail(v, int(PDF_PROFILE["metrc_tail_audit"]))
     )
 
@@ -635,9 +635,9 @@ def export_audit_pdfs(
             )
 
             audit_table_df = pd.DataFrame({
-                "Type": gdf["TypeDisp"].astype(str).fillna(""),
-                "Product": gdf["ProductDisp"].astype(str).fillna(""),
-                "METRC": gdf["MetrcLast8"].astype(str).fillna(""),
+                "Type": gdf["TypeDisp"].fillna("").astype(str),
+                "Product": gdf["ProductDisp"].fillna("").astype(str),
+                "METRC": gdf["MetrcLast8"].fillna("").astype(str),
                 "Room / Notes": [""] * len(gdf),
                 "QtyOrCount": qty_or_count,
             })

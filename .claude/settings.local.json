@@ -21,7 +21,12 @@
       "Bash(git add main.py)",
       "Bash(git commit:*)",
       "Bash(python -c \"from bisa import AsciiDogWidget; print\\(''OK''\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\(''bisa.py'', doraise=True\\); print\\(''OK''\\)\")"
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''bisa.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''data_core.py'', doraise=True\\); print\\(''data_core.py OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''pdf_export.py'', doraise=True\\); print\\(''pdf_export.py OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''mainExpiring.py'', doraise=True\\); print\\(''mainExpiring.py OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''kawaii_preview.py'', doraise=True\\); print\\(''kawaii_preview.py OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''main.py'', doraise=True\\); print\\(''OK''\\)\")"
     ]
   }
 }

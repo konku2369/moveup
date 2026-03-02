@@ -1,5 +1,4 @@
 import os
-import random
 import sys
 import json
 import subprocess
@@ -629,7 +628,7 @@ class MoveUpGUI:
         self.x_tree = ttk.Treeview(self.tab_excluded, columns=tuple(COLUMNS_TO_USE), show="headings", height=18)
         self._configure_tree_columns(self.x_tree, COLUMNS_TO_USE)
         self.x_tree.pack(fill="both", expand=True)
-        self.x_tree.bind("<ButtonRelease-1>", self._on_excluded_single_click)
+        self.x_tree.bind("<Double-1>", self._on_excluded_double_click)
 
         frm_all_top = ttk.Frame(self.tab_all)
         frm_all_top.pack(fill="x", padx=6, pady=(6, 2))
@@ -723,43 +722,12 @@ class MoveUpGUI:
         for c in tree["columns"]:
             current = tree.heading(c, "text")
             # Strip any existing arrow
-            clean = current.rstrip(" ▲▼")
+            clean = current.removesuffix(" ▲").removesuffix(" ▼")
             if c == col:
                 arrow = " ▲" if ascending else " ▼"
                 tree.heading(c, text=clean + arrow)
             else:
                 tree.heading(c, text=clean)
-
-    def _rebuild_main_tree_columns(self):
-        """
-        Destroy and recreate the Move-Up Treeview so it reflects
-        self.active_columns. Called after the column editor applies changes.
-        """
-        # Unbind before destroying
-        try:
-            self.tree.unbind("<Double-1>")
-        except Exception:
-            pass
-
-        # Clear stale sort state for the old tree
-        old_id = str(id(self.tree))
-        self._sort_state.pop(old_id, None)
-
-        self.tree.destroy()
-
-        self.tree = ttk.Treeview(
-            self.tab_moveup,
-            columns=tuple(self.active_columns),
-            show="headings",
-            height=18
-        )
-        self._configure_tree_columns(self.tree, self.active_columns)
-        self.tree.pack(fill="both", expand=True)
-        self.tree.bind("<Double-1>", self._on_moveup_double_click)
-
-        # Re-render with current data
-        if self.moveup_df is not None:
-            self._render_tree(self.moveup_df)
 
     def _toggle_advanced(self):
         show = not self.show_advanced_var.get()
@@ -773,144 +741,6 @@ class MoveUpGUI:
             self._adv_button.config(text="▶ Advanced")
 
     # ------------------------------
-    # ── NEW: Column Editor ──
-    # ------------------------------
-    def open_column_editor(self):
-        """
-        Opens a window that lets the user choose which columns to show
-        in the Move-Up tree, and in what order.
-        """
-        win = Toplevel(self.root)
-        win.title("Edit Display Columns")
-        win.geometry("520x480")
-        win.transient(self.root)
-        win.grab_set()
-
-        ttk.Label(
-            win,
-            text="Select which columns to display in the Move-Up list,\nand reorder them using the buttons.",
-            justify="left"
-        ).pack(anchor="w", padx=12, pady=(12, 6))
-
-        # ── listbox showing current active order ──
-        frm_list = ttk.Frame(win)
-        frm_list.pack(fill="both", expand=True, padx=12, pady=6)
-
-        lb = Listbox(frm_list, selectmode=tk.SINGLE, exportselection=False, height=16)
-        lb.pack(side="left", fill="both", expand=True)
-
-        sb = ttk.Scrollbar(frm_list, orient="vertical", command=lb.yview)
-        sb.pack(side="right", fill="y")
-        lb.config(yscrollcommand=sb.set)
-
-        # Track which columns are enabled via checkmarks in the label.
-        # We store the full ordered list (all COLUMNS_TO_USE) and which are active.
-        ordered: List[str] = list(COLUMNS_TO_USE)  # canonical order pool
-        enabled: Dict[str, bool] = {c: (c in self.active_columns) for c in ordered}
-
-        # Reorder so active_columns come first in the displayed order,
-        # followed by any hidden ones at the bottom.
-        ordered = list(self.active_columns) + [c for c in COLUMNS_TO_USE if c not in self.active_columns]
-
-        def refresh_lb():
-            sel = lb.curselection()
-            lb.delete(0, END)
-            for c in ordered:
-                mark = "✓" if enabled[c] else "✗"
-                lb.insert(END, f"  {mark}  {c}")
-            if sel:
-                lb.selection_set(sel[0])
-
-        refresh_lb()
-
-        # ── side buttons: move up / down / toggle ──
-        frm_btns = ttk.Frame(win)
-        frm_btns.pack(fill="x", padx=12, pady=4)
-
-        def move_up():
-            sel = lb.curselection()
-            if not sel:
-                return
-            i = sel[0]
-            if i == 0:
-                return
-            ordered[i], ordered[i - 1] = ordered[i - 1], ordered[i]
-            refresh_lb()
-            lb.selection_set(i - 1)
-
-        def move_down():
-            sel = lb.curselection()
-            if not sel:
-                return
-            i = sel[0]
-            if i >= len(ordered) - 1:
-                return
-            ordered[i], ordered[i + 1] = ordered[i + 1], ordered[i]
-            refresh_lb()
-            lb.selection_set(i + 1)
-
-        def toggle_enabled():
-            sel = lb.curselection()
-            if not sel:
-                return
-            col = ordered[sel[0]]
-            # Always keep Package Barcode enabled — it's used as the key everywhere
-            if col == "Package Barcode" and enabled[col]:
-                messagebox.showwarning(
-                    "Edit Columns",
-                    "'Package Barcode' must remain visible — it's used as the row key."
-                )
-                return
-            enabled[col] = not enabled[col]
-            refresh_lb()
-            lb.selection_set(sel[0])
-
-        def reset_defaults():
-            nonlocal ordered
-            ordered[:] = list(COLUMNS_TO_USE)
-            for c in ordered:
-                enabled[c] = True
-            refresh_lb()
-
-        ttk.Button(frm_btns, text="▲ Move Up", command=move_up).pack(side="left", padx=4)
-        ttk.Button(frm_btns, text="▼ Move Down", command=move_down).pack(side="left", padx=4)
-        ttk.Button(frm_btns, text="Toggle Show/Hide", command=toggle_enabled).pack(side="left", padx=4)
-        ttk.Button(frm_btns, text="Reset Defaults", command=reset_defaults).pack(side="left", padx=12)
-
-        ttk.Label(win, text="Double-click a row to toggle it on/off.", foreground="#666").pack(
-            anchor="w", padx=12, pady=(0, 2)
-        )
-
-        lb.bind("<Double-1>", lambda _e: toggle_enabled())
-
-        # ── Apply / Cancel ──
-        frm_bot = ttk.Frame(win)
-        frm_bot.pack(fill="x", padx=12, pady=(6, 12))
-
-        def apply():
-            new_active = [c for c in ordered if enabled[c]]
-            if not new_active:
-                messagebox.showerror("Edit Columns", "At least one column must be visible.")
-                return
-            if "Package Barcode" not in new_active:
-                messagebox.showerror("Edit Columns", "'Package Barcode' must remain visible.")
-                return
-            self.active_columns = new_active
-            self._save_config()
-            self._rebuild_main_tree_columns()
-            self.status.set(f"Display columns updated: {', '.join(self.active_columns)}")
-            win.destroy()
-
-        ttk.Button(frm_bot, text="Apply", command=apply).pack(side="left")
-        ttk.Button(frm_bot, text="Cancel", command=win.destroy).pack(side="left", padx=8)
-
-    # ------------------------------
-    # Simple callbacks
-    # ------------------------------
-    def _on_hide_removed_changed(self):
-        self._save_config()
-        self._recompute_from_current()
-
     # ------------------------------
     # Status counters
     # ------------------------------
@@ -995,7 +825,10 @@ class MoveUpGUI:
     # Open folder
     # ------------------------------
     def open_output_folder(self):
-        path = self.export_run_dir
+        if self._export_run_dir is None:
+            messagebox.showinfo("Open Folder", "No exports yet this session.")
+            return
+        path = self._export_run_dir
         try:
             if os.name == "nt":
                 os.startfile(path)
@@ -1454,13 +1287,13 @@ class MoveUpGUI:
             types_list.clear_selection()
             self._save_config()
 
-        ttk.Button(bot, text="Apply", command=apply_filters).pack(side="left")
-        ttk.Button(bot, text="Reset Defaults", command=reset_defaults).pack(side="left", padx=8)
-        ttk.Button(bot, text="Close", command=win.destroy).pack(side="left", padx=8)
-
         def _on_close():
             self.filters_window = None
             win.destroy()
+
+        ttk.Button(bot, text="Apply", command=apply_filters).pack(side="left")
+        ttk.Button(bot, text="Reset Defaults", command=reset_defaults).pack(side="left", padx=8)
+        ttk.Button(bot, text="Close", command=_on_close).pack(side="left", padx=8)
 
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
@@ -1797,6 +1630,11 @@ class MoveUpGUI:
 
             self.tree.insert("", "end", values=vals, tags=tuple(tags))
 
+        # Configure tag styles (must be set after inserts for ttk Treeview)
+        self.tree.tag_configure("excluded", foreground="#999999")
+        self.tree.tag_configure("backstock", foreground="#cc2222")
+        self.tree.tag_configure("kuntal", foreground="#c0007a")
+
     def _render_kuntal_tree(self, df: pd.DataFrame):
         for i in self.k_tree.get_children():
             self.k_tree.delete(i)
@@ -2061,7 +1899,7 @@ class MoveUpGUI:
     # ------------------------------
     # Excluded single-click restore
     # ------------------------------
-    def _on_excluded_single_click(self, event):
+    def _on_excluded_double_click(self, event):
         region = self.x_tree.identify("region", event.x, event.y)
         if region not in ("cell", "tree"):
             return
@@ -2075,7 +1913,7 @@ class MoveUpGUI:
         except Exception:
             pass
 
-        self._restore_excluded_selected(go_to_moveup=True, quiet=True)
+        self._restore_excluded_selected(go_to_moveup=False, quiet=True)
 
     def _restore_excluded_selected(self, go_to_moveup: bool = True, quiet: bool = False):
         sel = self.x_tree.selection()
@@ -2107,6 +1945,7 @@ class MoveUpGUI:
 
         if go_to_moveup:
             try:
+                self.nb.select(self.tab_moveup)
                 self.tree.selection_remove(self.tree.selection())
                 idx_bar_main = self.active_columns.index("Package Barcode")
 
