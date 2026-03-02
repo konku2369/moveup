@@ -5,11 +5,11 @@ She's a cat companion who reacts to user interactions
 and app events with various animations, tricks, and seasonal themes.
 """
 
+import os
 import random
 from datetime import datetime
 import tkinter as tk
 from tkinter import simpledialog
-
 
 class AsciiDogWidget:
     """Animated ASCII companion widget — Bisa the cat.
@@ -536,6 +536,9 @@ class AsciiDogWidget:
         self._catnip_redeemed = 0     # persisted — how many have been used
         self._on_catnip_change = None  # callback for main.py to persist
 
+        # Activity hook — fn(event_type: str, detail: str)
+        self._on_activity = None
+
         # Animation tuning
         self._speed_scale = 1.0
         self._legendary_chance = 0.01
@@ -726,6 +729,33 @@ class AsciiDogWidget:
         self._title_label.config(text=f"\u2726 {self._name} \u2726")
         self._update_stats()
 
+    def restore_state(self, *, pets=0, treats=0, moveups=0,
+                      catnip_redeemed=0, on_catnip_change=None,
+                      on_activity=None):
+        """Hydrate persisted lifetime stats (call once after construction)."""
+        self._total_pets = pets
+        self._total_treats = treats
+        self._total_moveups = moveups
+        self._catnip_redeemed = catnip_redeemed
+        self._on_catnip_change = on_catnip_change
+        self._on_activity = on_activity
+        self._update_stats()
+
+    def get_state(self) -> dict:
+        """Return dict of all persistable state for serialization."""
+        return {
+            "name": self._name,
+            "total_pets": self._total_pets,
+            "total_treats": self._total_treats,
+            "total_moveups": self._total_moveups,
+            "catnip_redeemed": self._catnip_redeemed,
+        }
+
+    def _emit(self, event_type: str, detail: str):
+        """Fire on_activity callback if set."""
+        if self._on_activity:
+            self._on_activity(event_type, detail)
+
     def _show_rename_dialog(self):
         """Open a dialog to rename the pet. Triggered by double-clicking her name."""
         new_name = simpledialog.askstring(
@@ -780,6 +810,7 @@ class AsciiDogWidget:
             return
         self._catnip_redeemed += 1
         self._update_catnip_display()
+        self._emit("catnip", "used catnip")
         self._cancel()
         self._state = "catnip"
         # 5-phase catnip trip:
@@ -951,6 +982,7 @@ class AsciiDogWidget:
         self._state = "pet"
         self._total_pets += 1
         self._update_stats()
+        self._emit("pet", "petted Bisa")
 
         if self._maybe_play_legendary():
             return
@@ -976,6 +1008,7 @@ class AsciiDogWidget:
         self._state = "treat"
         self._total_treats += 1
         self._update_stats()
+        self._emit("treat", "threw a treat")
 
         if self._maybe_play_legendary():
             return
@@ -1055,11 +1088,26 @@ class AsciiDogWidget:
             self._play_debug_showcase()
             return
 
+        # Special: "pop" launches standalone Bisa in a new window
+        if self._trick_buffer.endswith("pop"):
+            self._trick_buffer = ""
+            self._pop_standalone()
+            return
+
         for trigger, (msg_key, frames_attr) in self.TRICKS.items():
             if self._trick_buffer.endswith(trigger):
                 self._trick_buffer = ""
                 self._do_trick(msg_key, getattr(self, frames_attr))
                 return
+
+    def _pop_standalone(self):
+        """Launch standalone Bisa in a new process."""
+        import subprocess
+        import sys
+        bisa_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bisa.py")
+        subprocess.Popen([sys.executable, bisa_path])
+        self.msg_var.set("popped out!! \U0001f680")
+        self._emit("pop", "launched standalone Bisa")
 
     def _show_help_popup(self):
         """Show a small themed popup listing Bisa's (non-secret) commands."""
@@ -1234,6 +1282,7 @@ class AsciiDogWidget:
         self._state = "trick"
         self._total_pets += 1
         self._update_stats()
+        self._emit("trick", msg_key)
         self._run_anim(frames, self.MESSAGES[msg_key],
                        int(240 * self._speed_scale),
                        lambda: self._run_anim(self.HAPPY_FRAMES[:4],
@@ -1286,6 +1335,7 @@ class AsciiDogWidget:
             msg, frames = "good evening! \U0001f306", self.WAG_FRAMES
         else:
             msg, frames = "working late? \U0001f319", self.BLINK_FRAMES
+        self._emit("greet", msg)
         self._cancel()
         self._state = "idle"
         self._run_anim(frames, msg, int(300 * self._speed_scale),
@@ -1309,6 +1359,7 @@ class AsciiDogWidget:
     def react_data_loaded(self, row_count: int = 0):
         if self._state not in ("idle", "happy"):
             return
+        self._emit("loaded", f"{row_count} rows")
         self._cancel()
         self._state = "loaded"
         self._run_anim(self.LOAD_FRAMES, self.MESSAGES["loaded"], int(420 * self._speed_scale),
@@ -1318,6 +1369,9 @@ class AsciiDogWidget:
         """Bisa celebrates when SKUs are detected as moved to Sales Floor since last load."""
         if self._state not in ("idle", "happy", "pet"):
             return
+        self._total_moveups += count
+        self._update_stats()
+        self._emit("moveup", f"{count} SKU{'s' if count != 1 else ''} moved")
         self._cancel()
         self._state = "moveup"
         msg = f"{count} SKU{'s' if count != 1 else ''} moved!! \U0001f4e6"
@@ -1374,6 +1428,7 @@ class AsciiDogWidget:
     def react_success(self, msg: str = "nice!! \u2705"):
         if self._state != "idle":
             return
+        self._emit("success", msg)
         self._cancel()
         self._state = "success"
         frames = self.SUCCESS_FRAMES + self.WAG_FRAMES
@@ -1382,6 +1437,7 @@ class AsciiDogWidget:
     def react_warning(self, msg: str = "uh oh\u2026 \u26a0\ufe0f"):
         if self._state != "idle":
             return
+        self._emit("warning", msg)
         self._cancel()
         self._state = "warning"
         self._run_anim(self.WARNING_FRAMES, msg, int(320 * self._speed_scale), lambda: self._return_idle())
@@ -1389,6 +1445,275 @@ class AsciiDogWidget:
     def react_error(self, msg: str = "nope\u2026 \U0001f4a5"):
         if self._state != "idle":
             return
+        self._emit("error", msg)
         self._cancel()
         self._state = "error"
         self._run_anim(self.CONFUSED_FRAMES, msg, int(300 * self._speed_scale), lambda: self._return_idle())
+
+
+# ─── Standalone demo ───────────────────────────────────────────
+if __name__ == "__main__":
+    import json
+    import os
+    import threading
+
+    _BG = "#EEEAF8"
+    _ACCENT = "#7a4a9a"
+    _SAVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bisa_save.json")
+
+    # ── Offline fallback responses ──
+    _OFFLINE_RESPONSES = {
+        "hi": ["hiii!! \U0001f638\u2728", "hewwo!! \U0001f431", "oh hi!! yay!!", "hai hai!! \u2728"],
+        "hello": ["hiii!! \U0001f638\u2728", "hewwo!! \U0001f431", "oh hi!! yay!!"],
+        "hey": ["hiii!! \U0001f638\u2728", "hewwo!! \U0001f431", "oh hi!! yay!!"],
+        "treat": ["yes PLEASE!! \U0001f9c0\u2728", "treat?? for ME?? \U0001f97a", "om nom nom!! \U0001f41f"],
+        "pet": ["purrrr~ \u2665", "more pets please!! \U0001f43e", "so nice~ \u2665\u2665\u2665"],
+        "work": ["let's do it!! \U0001f4cb\u2728", "inventory time!! \U0001f4e6", "I'll help!! \U0001f431"],
+        "tired": ["nap time?? \U0001f634\U0001f4a4", "same... zzz... \U0001f319", "rest is important!! \U0001f4a4"],
+        "love": ["I love u too!! \u2665\u2665\u2665", "awww!! \U0001f63b\u2728", "u are the best!! \u2665"],
+        "sad": ["don't be sad!! \U0001f63f", "I'm here for u!! \u2665", "*nuzzles u* it's ok!! \U0001f43e"],
+        "good": ["yay!! \u2728\u2728", "nice!! \U0001f31f", "that's great!! \U0001f638"],
+        "bad": ["oh no... \U0001f63f", "it'll be ok!! \u2665", "I believe in u!! \U0001f4aa"],
+        "name": ["I'm Bisa!! \U0001f431\u2728", "that's me!! \U0001f638", "Bisa the cat!! meow!! \U0001f43e"],
+        "catnip": ["CATNIP?? \U0001f33f\U0001f4a8", "did someone say catnip?! \U0001f33f", "yes yes YES!! \U0001f33f\u2728"],
+    }
+    _OFFLINE_DEFAULT = ["mew?? \U0001f431", "...?? \U0001f440", "*tilts head* \U0001f431", "ooh tell me more!! \u2728",
+                        "interesting!! \U0001f440\u2728", "*purrs curiously* \U0001f431"]
+
+    def _offline_reply(user_msg: str) -> str:
+        low = user_msg.lower()
+        for key, pool in _OFFLINE_RESPONSES.items():
+            if key in low:
+                return random.choice(pool)
+        return random.choice(_OFFLINE_DEFAULT)
+
+    # ── Save / load ──
+    def _load_save() -> dict:
+        try:
+            with open(_SAVE_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _write_save():
+        state = bisa_widget.get_state()
+        state["api_key"] = _api_key
+        try:
+            with open(_SAVE_PATH, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            print(f"[bisa] Could not save: {e}")
+
+    def _on_catnip_change(_redeemed):
+        _write_save()
+
+    def _on_rename(_new_name):
+        _write_save()
+
+    # ── Log helper ──
+    def _log(text: str, tag: str = "bisa"):
+        stamp = datetime.now().strftime("%H:%M")
+        log_text.configure(state="normal")
+        log_text.insert("end", f"[{stamp}] ", "time")
+        log_text.insert("end", f"{text}\n", tag)
+        log_text.configure(state="disabled")
+        log_text.see("end")
+
+    # ── Activity callback ──
+    def _on_activity(event_type: str, detail: str):
+        _log(f"Bisa: {detail}")
+
+    # ── Chat history for AI context ──
+    _chat_history = []
+
+    def _send_message(event=None):
+        msg = chat_var.get().strip()
+        if not msg:
+            return
+        chat_var.set("")
+        _log(f"You: {msg}", "user")
+        _chat_history.append({"role": "user", "content": msg})
+
+        # Try AI, fall back to offline
+        if _api_key and _has_anthropic:
+            chat_entry.configure(state="disabled")
+            send_btn.configure(state="disabled")
+
+            def _call_ai():
+                try:
+                    import anthropic
+                    client = anthropic.Anthropic(api_key=_api_key)
+                    system_prompt = (
+                        "You are Bisa, an adorable cat companion in an inventory management app. "
+                        "You are a cat — curious, playful, and enthusiastic. "
+                        "You love treats, pets, naps, and helping your human with inventory work. "
+                        "You speak in short, excited sentences with lots of exclamation marks and emojis. "
+                        "You say things like 'yay!!!!', 'treat??', 'so nice~', 'hiii!!'. "
+                        "Keep responses to 1-3 short sentences. Never break character. "
+                        "You know about cannabis retail inventory, barcodes, move-ups, and backstock."
+                    )
+                    # Send last 20 messages for context
+                    recent = _chat_history[-20:]
+                    resp = client.messages.create(
+                        model="claude-haiku-4-5-20251001",
+                        max_tokens=150,
+                        system=system_prompt,
+                        messages=recent,
+                    )
+                    reply = resp.content[0].text
+                except Exception as e:
+                    print(f"[bisa] AI error: {e}")
+                    reply = _offline_reply(msg)
+
+                def _show():
+                    _chat_history.append({"role": "assistant", "content": reply})
+                    # Cap history at 20 messages
+                    while len(_chat_history) > 20:
+                        _chat_history.pop(0)
+                    _log(f"Bisa: {reply}", "ai")
+                    bisa_widget.msg_var.set(reply)
+                    chat_entry.configure(state="normal")
+                    send_btn.configure(state="normal")
+                    chat_entry.focus_set()
+                root.after(0, _show)
+
+            threading.Thread(target=_call_ai, daemon=True).start()
+        else:
+            reply = _offline_reply(msg)
+            _chat_history.append({"role": "assistant", "content": reply})
+            while len(_chat_history) > 20:
+                _chat_history.pop(0)
+            _log(f"Bisa: {reply}", "ai")
+            bisa_widget.msg_var.set(reply)
+
+    # ── API key management ──
+    _api_key = ""
+    _has_anthropic = False
+    try:
+        import anthropic as _anth_check  # noqa: F401
+        _has_anthropic = True
+    except ImportError:
+        pass
+
+    def _set_api_key():
+        global _api_key
+        key = simpledialog.askstring(
+            "API Key",
+            "Enter your Anthropic API key:",
+            initialvalue=_api_key,
+            show="*",
+            parent=root,
+        )
+        if key is not None:
+            _api_key = key.strip()
+            _update_status()
+            _write_save()
+
+    def _update_status():
+        if not _has_anthropic:
+            status_var.set("AI: Offline (anthropic not installed)")
+        elif _api_key:
+            status_var.set("AI: Connected \u2713")
+        else:
+            status_var.set("AI: Offline (no key)")
+
+    # ── Build UI ──
+    root = tk.Tk()
+    root.title("Bisa \u2014 Standalone")
+    root.configure(bg=_BG)
+    root.geometry("420x680")
+
+    save = _load_save()
+    _api_key = save.get("api_key", "")
+
+    bisa_widget = AsciiDogWidget(root, name=save.get("name", "Bisa"), on_rename=_on_rename)
+    bisa_widget.restore_state(
+        pets=save.get("total_pets", 0),
+        treats=save.get("total_treats", 0),
+        moveups=save.get("total_moveups", 0),
+        catnip_redeemed=save.get("catnip_redeemed", 0),
+        on_catnip_change=_on_catnip_change,
+        on_activity=_on_activity,
+    )
+    bisa_widget.frame.pack(fill="x", padx=10, pady=(10, 4))
+
+    # Simulate app events row
+    btn_row = tk.Frame(root, bg=_BG)
+    btn_row.pack(fill="x", padx=10, pady=(0, 4))
+    tk.Button(btn_row, text="Data Loaded",
+              command=lambda: bisa_widget.react_data_loaded(42)).pack(side="left", padx=2)
+    tk.Button(btn_row, text="Move-Ups!",
+              command=lambda: bisa_widget.react_moveups(3)).pack(side="left", padx=2)
+    tk.Button(btn_row, text="Success",
+              command=lambda: bisa_widget.react_success()).pack(side="left", padx=2)
+    tk.Button(btn_row, text="Error",
+              command=lambda: bisa_widget.react_error()).pack(side="left", padx=2)
+
+    # Activity log
+    log_frame = tk.Frame(root, bg=_BG)
+    log_frame.pack(fill="both", expand=True, padx=10, pady=(0, 4))
+
+    log_scroll = tk.Scrollbar(log_frame)
+    log_scroll.pack(side="right", fill="y")
+
+    log_text = tk.Text(
+        log_frame,
+        wrap="word",
+        font=("Segoe UI", 9),
+        bg="#F6F4FC",
+        fg="#1F2328",
+        relief="sunken",
+        bd=1,
+        state="disabled",
+        yscrollcommand=log_scroll.set,
+        height=8,
+    )
+    log_text.pack(fill="both", expand=True)
+    log_scroll.config(command=log_text.yview)
+
+    # Log text tags for color coding
+    log_text.tag_configure("time", foreground="#999999")
+    log_text.tag_configure("bisa", foreground=_ACCENT)
+    log_text.tag_configure("user", foreground="#1F2328")
+    log_text.tag_configure("ai", foreground="#5a2d82", font=("Segoe UI", 9, "italic"))
+
+    # Chat input
+    chat_frame = tk.Frame(root, bg=_BG)
+    chat_frame.pack(fill="x", padx=10, pady=(0, 4))
+
+    chat_var = tk.StringVar()
+    chat_entry = tk.Entry(chat_frame, textvariable=chat_var, font=("Segoe UI", 10))
+    chat_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+    chat_entry.bind("<Return>", _send_message)
+
+    send_btn = tk.Button(chat_frame, text="Send", command=_send_message)
+    send_btn.pack(side="right")
+
+    # Status bar
+    status_frame = tk.Frame(root, bg=_BG)
+    status_frame.pack(fill="x", padx=10, pady=(0, 6))
+
+    status_var = tk.StringVar()
+    tk.Label(status_frame, textvariable=status_var, font=("Segoe UI", 8),
+             bg=_BG, fg="#999999").pack(side="left")
+    tk.Button(status_frame, text="Set API Key", command=_set_api_key,
+              font=("Segoe UI", 8)).pack(side="right")
+
+    _update_status()
+
+    # Click blank space to throw a treat
+    def _on_click(event):
+        if event.widget in (root, btn_row):
+            win_x = event.x_root - root.winfo_rootx()
+            bisa_widget.throw_treat_at_window_x(win_x, root.winfo_width())
+    root.bind("<Button-1>", _on_click, add="+")
+
+    # Greet + auto-save on close
+    bisa_widget.greet_startup()
+
+    def _on_close():
+        _write_save()
+        root.destroy()
+    root.protocol("WM_DELETE_WINDOW", _on_close)
+
+    root.mainloop()

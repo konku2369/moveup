@@ -238,12 +238,13 @@ class MoveUpGUI:
         self._build_ui()
 
         # Push persisted totals into the widget now that it exists
-        self.dog_widget._total_pets = self._lifetime_pets
-        self.dog_widget._total_treats = self._lifetime_treats
-        self.dog_widget._total_moveups = self._lifetime_moveups
-        self.dog_widget._catnip_redeemed = self._catnip_redeemed
-        self.dog_widget._on_catnip_change = self._on_catnip_redeemed
-        self.dog_widget._update_stats()
+        self.dog_widget.restore_state(
+            pets=self._lifetime_pets,
+            treats=self._lifetime_treats,
+            moveups=self._lifetime_moveups,
+            catnip_redeemed=self._catnip_redeemed,
+            on_catnip_change=self._on_catnip_redeemed,
+        )
         self.dog_widget.greet_startup()
 
         self._bind_window_treat()
@@ -329,6 +330,7 @@ class MoveUpGUI:
 
     def _save_config(self):
         try:
+            bs = self.dog_widget.get_state() if hasattr(self, "dog_widget") else {}
             cfg = {
                 "room_alias_map": self.room_alias_map,
                 "selected_rooms": self.selected_rooms,
@@ -346,11 +348,11 @@ class MoveUpGUI:
                 "excluded_barcodes": sorted(list(self.excluded_barcodes)),
                 "kuntal_priority_barcodes": sorted(list(self.kuntal_priority_barcodes)),
                 "active_columns": self.active_columns,
-                "lifetime_pets":    self.dog_widget._total_pets    if hasattr(self, "dog_widget") else self._lifetime_pets,
-                "lifetime_treats":  self.dog_widget._total_treats  if hasattr(self, "dog_widget") else self._lifetime_treats,
-                "lifetime_moveups": self.dog_widget._total_moveups if hasattr(self, "dog_widget") else self._lifetime_moveups,
-                "bisa_name":        self.dog_widget._name          if hasattr(self, "dog_widget") else self._bisa_name,
-                "catnip_redeemed":  self.dog_widget._catnip_redeemed if hasattr(self, "dog_widget") else self._catnip_redeemed,
+                "lifetime_pets":    bs.get("total_pets", self._lifetime_pets),
+                "lifetime_treats":  bs.get("total_treats", self._lifetime_treats),
+                "lifetime_moveups": bs.get("total_moveups", self._lifetime_moveups),
+                "bisa_name":        bs.get("name", self._bisa_name),
+                "catnip_redeemed":  bs.get("catnip_redeemed", self._catnip_redeemed),
                 "prev_inventory_snapshot": self._prev_inventory_snapshot,
             }
             tmp = self.config_path + ".tmp"
@@ -900,8 +902,6 @@ class MoveUpGUI:
                 self._save_config()
 
                 if _moved > 0 and hasattr(self, "dog_widget"):
-                    self.dog_widget._total_moveups += _moved
-                    self.dog_widget._update_stats()
                     self.dog_widget.react_moveups(_moved)
                 elif hasattr(self, "dog_widget"):
                     self.dog_widget.react_data_loaded(len(mapped))
