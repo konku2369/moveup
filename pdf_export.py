@@ -403,7 +403,8 @@ def _build_audit_page_elements(
     title: str,
     mode: str,
     kawaii_pdf: bool,
-    printer_bw: bool
+    printer_bw: bool,
+    barcode_header: str = "METRC",
 ):
     """
     df_chunk must have columns:
@@ -420,9 +421,9 @@ def _build_audit_page_elements(
     elements.append(Paragraph(" ", styles["Normal"]))
 
     headers = (
-        ["Type", "Product", "METRC", " ", "Qty"]
+        ["Type", "Product", barcode_header, " ", "Qty"]
         if mode == "master"
-        else ["Type", "Product", "METRC", " ", "Count"]
+        else ["Type", "Product", barcode_header, " ", "Count"]
     )
 
     table_data = [headers] + df_chunk.values.tolist()
@@ -540,6 +541,7 @@ def export_audit_pdfs(
     default_store: str = "Store",
     default_room: str = "Sales Floor",
     type_trunc_len: int = TYPE_TRUNC_LEN,
+    barcode_col: str | None = None,
 ) -> Tuple[str, str]:
     """
     Generates two PDFs:
@@ -598,9 +600,16 @@ def export_audit_pdfs(
 
     work["TypeDisp"] = work["Type"].fillna("").astype(str).map(_type_disp)
     work["ProductDisp"] = work["Product Name"].fillna("").astype(str).map(lambda v: _fmt_product(v))
-    work["MetrcLast8"] = work["Package Barcode"].fillna("").astype(str).map(
-        lambda v: _fmt_barcode_tail(v, int(PDF_PROFILE["metrc_tail_audit"]))
-    )
+    if barcode_col and barcode_col in work.columns:
+        work["MetrcLast8"] = work[barcode_col].fillna("").astype(str).map(
+            lambda v: _fmt_barcode_tail(v, 6)
+        )
+        barcode_header = "Barcode"
+    else:
+        work["MetrcLast8"] = work["Package Barcode"].fillna("").astype(str).map(
+            lambda v: _fmt_barcode_tail(v, int(PDF_PROFILE["metrc_tail_audit"]))
+        )
+        barcode_header = "METRC"
 
     work["Qty On Hand"] = pd.to_numeric(work["Qty On Hand"], errors="coerce").fillna(0).astype(int)
 
@@ -648,6 +657,7 @@ def export_audit_pdfs(
                 mode=mode,
                 kawaii_pdf=kawaii_pdf,
                 printer_bw=printer_bw,
+                barcode_header=barcode_header,
             )
 
             if gi < len(groups) - 1:

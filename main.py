@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -12,32 +11,52 @@ from tkinter import (
     Tk, Toplevel, StringVar, IntVar, BooleanVar, filedialog, messagebox,
     ttk
 )
-from tkinter import Listbox, MULTIPLE, END
 import tkinter as tk
 
 # PDF exports live in pdf_export.py
-from pdf_export import export_moveup_pdf_paginated, export_audit_pdfs
+from pdf_export import export_moveup_pdf_paginated
 
 # Bisa (ASCII cat companion)
 from bisa import AsciiDogWidget
+
+# Config persistence
+from config_manager import ConfigManager
 
 # Core logic
 from data_core import (
     APP_VERSION,
     APP_NAME,
     COLUMNS_TO_USE,
-    AUDIT_OPTIONAL_FIELDS,
-    TYPE_TRUNC_LEN,
     SALES_FLOOR_ALIASES,
     load_raw_df,
     automap_columns,
     compute_moveup_from_df,
     normalize_rooms,
-    detect_metrc_source_column,
     sort_with_backstock_priority,
-    ellipses,
     sanitize_prefix,
     aggregate_split_packages_by_room,
+)
+
+# Extracted modules
+from dialogs import (
+    open_map_columns_dialog,
+    open_filters_window as _dlg_filters,
+    open_audit_window as _dlg_audit,
+    open_manual_add_dialog,
+    get_all_rooms_normalized,
+    get_all_brands,
+    get_all_types,
+    default_candidate_rooms,
+)
+from tree_ops import (
+    get_display_cols,
+    configure_tree_columns,
+    sort_tree,
+    refresh_treeview_columns,
+    render_moveup_tree,
+    render_kuntal_tree,
+    render_excluded_tree,
+    render_all_tree,
 )
 
 # ------------------------------
@@ -77,92 +96,6 @@ def export_excel(
     return out
 
 
-# ------------------------------
-# Filters UI helper
-# ------------------------------
-class _FilterList:
-    def __init__(self, parent, title: str):
-        self.title = title
-        self.all_items: List[str] = []
-        self.filtered_idx: List[int] = []
-
-        frm = ttk.Labelframe(parent, text=title, padding=8)
-        frm.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-
-        self.search_var = StringVar(value="")
-        ttk.Label(frm, text="Search").pack(anchor="w")
-        self.ent = ttk.Entry(frm, textvariable=self.search_var)
-        self.ent.pack(fill="x", pady=(0, 6))
-
-        inner = ttk.Frame(frm)
-        inner.pack(fill="both", expand=True)
-
-        self.lb = Listbox(inner, selectmode=MULTIPLE, height=18, exportselection=False)
-        self.lb.pack(side="left", fill="both", expand=True)
-
-        sb = ttk.Scrollbar(inner, orient="vertical", command=self.lb.yview)
-        sb.pack(side="right", fill="y")
-        self.lb.config(yscrollcommand=sb.set)
-
-        btns = ttk.Frame(frm)
-        btns.pack(fill="x", pady=(6, 0))
-        ttk.Button(btns, text="Select All", command=self.select_all).pack(side="left")
-        ttk.Button(btns, text="Clear", command=self.clear_selection).pack(side="left", padx=6)
-
-        self.search_var.trace_add("write", lambda *_: self.refresh())
-
-    def set_items(self, items: List[str]):
-        self.all_items = list(items or [])
-        self.refresh()
-
-    def refresh(self):
-        q = (self.search_var.get() or "").strip().lower()
-        selected_vals = set(self.get_selected_values())
-        self.lb.delete(0, END)
-
-        if not q:
-            self.filtered_idx = list(range(len(self.all_items)))
-        else:
-            tokens = q.split()
-
-            def match(i: int) -> bool:
-                s = self.all_items[i].lower()
-                return all(t in s for t in tokens)
-
-            self.filtered_idx = [i for i in range(len(self.all_items)) if match(i)]
-
-        for i in self.filtered_idx:
-            self.lb.insert(END, self.all_items[i])
-
-        for pos, i in enumerate(self.filtered_idx):
-            if self.all_items[i] in selected_vals:
-                self.lb.selection_set(pos)
-
-    def select_all(self):
-        self.lb.selection_set(0, END)
-
-    def clear_selection(self):
-        self.lb.selection_clear(0, END)
-
-    def set_selected_values(self, values: List[str]):
-        values_set = set(values or [])
-        self.lb.selection_clear(0, END)
-        self.search_var.set("")
-        self.refresh()
-        for pos, i in enumerate(self.filtered_idx):
-            if self.all_items[i] in values_set:
-                self.lb.selection_set(pos)
-
-    def get_selected_values(self) -> List[str]:
-        sel = list(self.lb.curselection())
-        out = []
-        for pos in sel:
-            if pos < 0 or pos >= len(self.filtered_idx):
-                continue
-            i = self.filtered_idx[pos]
-            out.append(self.all_items[i])
-        return out
-
 
 # GUI
 # ------------------------------
@@ -194,12 +127,8 @@ class MoveUpGUI:
         self._button_registry = []
         self._create_kawaii_theme()
 
-        self.app_dir = self._determine_app_dir()
-        self.config_path = os.path.join(self.app_dir, "moveup_config.json")
-
-        # Backup config in user home directory
-        self._backup_dir = os.path.join(os.path.expanduser("~"), ".moveup")
-        self._backup_config_path = os.path.join(self._backup_dir, "moveup_config_backup.json")
+        self.cfg = ConfigManager(tk_root=self.root)
+        self.app_dir = self.cfg.app_dir
 
         self.export_root = os.path.join(self.app_dir, "generated")
         os.makedirs(self.export_root, exist_ok=True)
@@ -258,119 +187,80 @@ class MoveUpGUI:
     # Config persistence
     # ------------------------------
     def _load_config(self):
+        """Pull persisted config from disk via ConfigManager."""
+        self.cfg.load(valid_columns=list(COLUMNS_TO_USE))
+        c = self.cfg
+
+        # Plain instance vars
+        self.room_alias_map   = c["room_alias_map"]
+        self.selected_rooms   = c["selected_rooms"]
+        self.selected_brands  = c["selected_brands"]
+        self.selected_types   = c["selected_types"]
+
+        # Tk variables
+        self.printer_bw_var.set(c["printer_bw"])
+        self.skip_sales_floor_var.set(c["skip_sales_floor"])
+        self.hide_removed_var.set(c["hide_removed"])
+        self.auto_open_var.set(c["auto_open_pdf"])
+        self.timestamp_var.set(c["timestamp"])
         try:
-            if not os.path.exists(self.config_path):
-                # Main config missing — check for backup
-                if os.path.exists(self._backup_config_path):
-                    restore = messagebox.askyesno(
-                        "Config Not Found",
-                        "Your main config file is missing, but a backup was found.\n\n"
-                        "Would you like to restore from the backup?\n\n"
-                        "(Choose 'No' to start fresh.)",
-                    )
-                    if restore:
-                        import shutil
-                        shutil.copy2(self._backup_config_path, self.config_path)
-                        print("[moveup] Restored config from backup.")
-                    else:
-                        return
-                else:
-                    return
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
+            self.page_items_var.set(c["items_per_page"])
+        except Exception:
+            pass
+        self.prefix_var.set(c["prefix"])
 
-            self.room_alias_map = dict(cfg.get("room_alias_map", {}) or {})
-            self.selected_rooms = list(cfg.get("selected_rooms", []) or [])
-            self.selected_brands = list(cfg.get("selected_brands", []) or [])
-            self.selected_types = list(cfg.get("selected_types", []) or [])
+        # Sets (stored as lists in JSON)
+        self.excluded_barcodes         = set(c["excluded_barcodes"])
+        self.kuntal_priority_barcodes  = set(c["kuntal_priority_barcodes"])
 
-            self.printer_bw_var.set(bool(cfg.get("printer_bw", self.printer_bw_var.get())))
-            self.skip_sales_floor_var.set(bool(cfg.get("skip_sales_floor", self.skip_sales_floor_var.get())))
-            self.hide_removed_var.set(bool(cfg.get("hide_removed", self.hide_removed_var.get())))
-            self.auto_open_var.set(bool(cfg.get("auto_open_pdf", self.auto_open_var.get())))
-            self.timestamp_var.set(bool(cfg.get("timestamp", self.timestamp_var.get())))
+        # Active columns
+        self.active_columns = c["active_columns"] or list(COLUMNS_TO_USE)
 
-            self.excluded_barcodes = set(cfg.get("excluded_barcodes", []) or [])
-            self.kuntal_priority_barcodes = set(cfg.get("kuntal_priority_barcodes", []) or [])
+        # Validated paths
+        if c["last_import_dir"]:
+            self.last_import_dir = c["last_import_dir"]
+        if c["current_file_path"]:
+            self.current_file_path = c["current_file_path"]
 
-            # Restore active_columns, but validate against COLUMNS_TO_USE
-            saved_cols = cfg.get("active_columns", [])
-            if saved_cols and all(c in COLUMNS_TO_USE for c in saved_cols):
-                self.active_columns = list(saved_cols)
-            else:
-                self.active_columns = list(COLUMNS_TO_USE)
+        # Bisa stats
+        self._lifetime_pets    = c["lifetime_pets"]
+        self._lifetime_treats  = c["lifetime_treats"]
+        self._lifetime_moveups = c["lifetime_moveups"]
+        self._bisa_name        = c["bisa_name"]
+        self._catnip_redeemed  = c["catnip_redeemed"]
 
-            try:
-                self.page_items_var.set(int(cfg.get("items_per_page", self.page_items_var.get())))
-            except Exception:
-                pass
-
-            self.prefix_var.set(str(cfg.get("prefix", self.prefix_var.get()) or ""))
-
-            last_dir = cfg.get("last_import_dir")
-            if isinstance(last_dir, str) and last_dir.strip() and os.path.isdir(last_dir):
-                self.last_import_dir = last_dir.strip()
-
-            last_file = cfg.get("current_file_path")
-            if isinstance(last_file, str) and last_file.strip() and os.path.isfile(last_file):
-                self.current_file_path = last_file.strip()
-
-            self._lifetime_pets    = int(cfg.get("lifetime_pets",    0))
-            self._lifetime_treats  = int(cfg.get("lifetime_treats",  0))
-            self._lifetime_moveups = int(cfg.get("lifetime_moveups", 0))
-            self._bisa_name        = str(cfg.get("bisa_name", "Bisa")) or "Bisa"
-            self._catnip_redeemed  = int(cfg.get("catnip_redeemed", 0))
-
-            snap = cfg.get("prev_inventory_snapshot", {})
-            if isinstance(snap, dict):
-                self._prev_inventory_snapshot = snap
-
-        except Exception as e:
-            print(f"[moveup] Warning: could not load config ({self.config_path}): {e}")
+        # Inventory snapshot
+        self._prev_inventory_snapshot = c["prev_inventory_snapshot"]
 
     def _save_config(self):
-        try:
-            bs = self.dog_widget.get_state() if hasattr(self, "dog_widget") else {}
-            cfg = {
-                "room_alias_map": self.room_alias_map,
-                "selected_rooms": self.selected_rooms,
-                "selected_brands": self.selected_brands,
-                "selected_types": self.selected_types,
-                "printer_bw": bool(self.printer_bw_var.get()),
-                "skip_sales_floor": bool(self.skip_sales_floor_var.get()),
-                "hide_removed": bool(self.hide_removed_var.get()),
-                "auto_open_pdf": bool(self.auto_open_var.get()),
-                "timestamp": bool(self.timestamp_var.get()),
-                "items_per_page": int(self.page_items_var.get() or 30),
-                "prefix": str(self.prefix_var.get() or ""),
-                "last_import_dir": self.last_import_dir or "",
-                "current_file_path": self.current_file_path or "",
-                "excluded_barcodes": sorted(list(self.excluded_barcodes)),
-                "kuntal_priority_barcodes": sorted(list(self.kuntal_priority_barcodes)),
-                "active_columns": self.active_columns,
-                "lifetime_pets":    bs.get("total_pets", self._lifetime_pets),
-                "lifetime_treats":  bs.get("total_treats", self._lifetime_treats),
-                "lifetime_moveups": bs.get("total_moveups", self._lifetime_moveups),
-                "bisa_name":        bs.get("name", self._bisa_name),
-                "catnip_redeemed":  bs.get("catnip_redeemed", self._catnip_redeemed),
-                "prev_inventory_snapshot": self._prev_inventory_snapshot,
-            }
-            tmp = self.config_path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2)
-            os.replace(tmp, self.config_path)
+        """Push GUI state into ConfigManager and write to disk."""
+        c = self.cfg
+        bs = self.dog_widget.get_state() if hasattr(self, "dog_widget") else {}
 
-            # Also write backup to user home directory
-            try:
-                os.makedirs(self._backup_dir, exist_ok=True)
-                tmp_bk = self._backup_config_path + ".tmp"
-                with open(tmp_bk, "w", encoding="utf-8") as f:
-                    json.dump(cfg, f, indent=2)
-                os.replace(tmp_bk, self._backup_config_path)
-            except Exception:
-                pass  # backup failure is non-critical
-        except Exception as e:
-            print(f"[moveup] Warning: could not save config ({self.config_path}): {e}")
+        c["room_alias_map"]           = self.room_alias_map
+        c["selected_rooms"]           = self.selected_rooms
+        c["selected_brands"]          = self.selected_brands
+        c["selected_types"]           = self.selected_types
+        c["printer_bw"]               = bool(self.printer_bw_var.get())
+        c["skip_sales_floor"]         = bool(self.skip_sales_floor_var.get())
+        c["hide_removed"]             = bool(self.hide_removed_var.get())
+        c["auto_open_pdf"]            = bool(self.auto_open_var.get())
+        c["timestamp"]                = bool(self.timestamp_var.get())
+        c["items_per_page"]           = int(self.page_items_var.get() or 30)
+        c["prefix"]                   = str(self.prefix_var.get() or "")
+        c["last_import_dir"]          = self.last_import_dir or ""
+        c["current_file_path"]        = self.current_file_path or ""
+        c["excluded_barcodes"]        = sorted(list(self.excluded_barcodes))
+        c["kuntal_priority_barcodes"] = sorted(list(self.kuntal_priority_barcodes))
+        c["active_columns"]           = self.active_columns
+        c["lifetime_pets"]            = bs.get("total_pets", self._lifetime_pets)
+        c["lifetime_treats"]          = bs.get("total_treats", self._lifetime_treats)
+        c["lifetime_moveups"]         = bs.get("total_moveups", self._lifetime_moveups)
+        c["bisa_name"]                = bs.get("name", self._bisa_name)
+        c["catnip_redeemed"]          = bs.get("catnip_redeemed", self._catnip_redeemed)
+        c["prev_inventory_snapshot"]  = self._prev_inventory_snapshot
+
+        c.save()
 
     def _on_bisa_renamed(self, new_name: str):
         """Callback from Bisa widget when the user renames her."""
@@ -392,11 +282,6 @@ class MoveUpGUI:
     # ------------------------------
     # Base helpers
     # ------------------------------
-    def _determine_app_dir(self) -> str:
-        if getattr(sys, "frozen", False):
-            return os.path.dirname(sys.executable)
-        return os.path.dirname(os.path.abspath(__file__))
-
     @property
     def export_run_dir(self) -> str:
         """Lazily create the timestamped export directory on first actual use."""
@@ -504,12 +389,6 @@ class MoveUpGUI:
         btn_audit.pack(side="left", padx=4)
         self._register_button(btn_audit, "Audit PDFs…")
 
-        btn_kawaii_settings_main = ttk.Button(
-            btn_row, text="Kawaii PDF Settings…", command=self.open_kawaii_settings,
-        )
-        btn_kawaii_settings_main.pack(side="left", padx=4)
-        self._register_button(btn_kawaii_settings_main, "Kawaii PDF Settings…")
-
         btn_expiring = ttk.Button(
             btn_row, text="Expiring Soon…", command=self.open_expiring_window,
         )
@@ -549,6 +428,12 @@ class MoveUpGUI:
         btn_filters = ttk.Button(adv_row, text="Filters…", command=self.open_filters_window)
         btn_filters.pack(side="left", padx=4)
         self._register_button(btn_filters, "Filters…")
+
+        btn_kawaii_settings_main = ttk.Button(
+            adv_row, text="Kawaii PDF Settings…", command=self.open_kawaii_settings,
+        )
+        btn_kawaii_settings_main.pack(side="left", padx=4)
+        self._register_button(btn_kawaii_settings_main, "Kawaii PDF Settings…")
 
         # Items per page (ANCHOR)
         self.frm_page = ttk.Frame(frm_controls)
@@ -690,46 +575,10 @@ class MoveUpGUI:
 
 
     def _configure_tree_columns(self, tree: ttk.Treeview, cols: List[str]):
-        """Apply standard column widths and wire up click-to-sort on every heading."""
-        tree_id = str(id(tree))
-        if tree_id not in self._sort_state:
-            self._sort_state[tree_id] = {}
-
-        for col in cols:
-            tree.heading(col, text=col)
-            tree.column(col, width=150 if col != "Product Name" else 440, anchor="w")
-            # Bind after setting heading so the command captures col correctly
-            tree.heading(col, command=lambda c=col, t=tree, tid=tree_id: self._sort_tree(t, tid, c))
+        configure_tree_columns(tree, cols, self._sort_state, self._sort_tree)
 
     def _sort_tree(self, tree: ttk.Treeview, tree_id: str, col: str):
-        """Sort a Treeview in-place by col, toggling asc/desc. Updates heading arrows."""
-        state = self._sort_state.setdefault(tree_id, {})
-        ascending = not state.get(col, True)   # first click → ascending
-        state[col] = ascending
-
-        # Collect all rows
-        rows = [(tree.set(iid, col), iid) for iid in tree.get_children("")]
-
-        # Try numeric sort first, fall back to case-insensitive string
-        try:
-            rows.sort(key=lambda x: float(x[0]) if x[0] != "" else float("-inf"),
-                      reverse=not ascending)
-        except (ValueError, TypeError):
-            rows.sort(key=lambda x: str(x[0]).lower(), reverse=not ascending)
-
-        for pos, (_, iid) in enumerate(rows):
-            tree.move(iid, "", pos)
-
-        # Update all headings: clear arrows on others, set on sorted col
-        for c in tree["columns"]:
-            current = tree.heading(c, "text")
-            # Strip any existing arrow
-            clean = current.removesuffix(" ▲").removesuffix(" ▼")
-            if c == col:
-                arrow = " ▲" if ascending else " ▼"
-                tree.heading(c, text=clean + arrow)
-            else:
-                tree.heading(c, text=clean)
+        sort_tree(tree, tree_id, col, self._sort_state)
 
     def _toggle_advanced(self):
         show = not self.show_advanced_var.get()
@@ -811,17 +660,11 @@ class MoveUpGUI:
     DISPLAY_EXTRA_COLUMNS = ["Received Date"]
 
     def _display_cols_for(self, df: "Optional[pd.DataFrame]" = None) -> List[str]:
-        """
-        Returns the columns to show in treeviews: active_columns +
-        any DISPLAY_EXTRA_COLUMNS that are present in df (or current_df).
-        """
-        base = list(self.active_columns)
-        src = df if df is not None else self.current_df
-        if src is not None and not src.empty:
-            for col in self.DISPLAY_EXTRA_COLUMNS:
-                if col in src.columns and col not in base:
-                    base.append(col)
-        return base
+        return get_display_cols(
+            self.active_columns,
+            df if df is not None else self.current_df,
+            self.DISPLAY_EXTRA_COLUMNS,
+        )
 
     # ------------------------------
     # Open folder
@@ -934,228 +777,18 @@ class MoveUpGUI:
             messagebox.showinfo("Map Columns", "Import a file first.")
             return
 
-        src_cols = list(self.raw_df.columns)
-        metrc_src_detected = detect_metrc_source_column(self.raw_df)
+        def _on_apply(mapped_df, mapping):
+            self.col_mapping_override = mapping
+            self.current_df = mapped_df
+            present = set(mapped_df["Package Barcode"].astype(str).fillna("").str.strip().tolist())
+            self.excluded_barcodes = {bc for bc in self.excluded_barcodes if bc in present}
+            self.kuntal_priority_barcodes = {bc for bc in self.kuntal_priority_barcodes if bc in present}
+            self._update_kuntalcount()
+            self._update_rowcount(mapped_df)
+            self._recompute_from_current()
+            self.status.set("Column mapping applied (METRC forced to Package Barcode).")
 
-        auto_map = {}
-        try:
-            _auto_df, auto_map = automap_columns(self.raw_df)
-        except Exception:
-            auto_map = {}
-
-        win = Toplevel(self.root)
-        win.title("Map Columns (Manual Override)")
-        win.geometry("760x560")
-        ttk.Label(win, text="Choose which source column maps to each required field.").pack(anchor="w", padx=10, pady=10)
-
-        frame = ttk.Frame(win)
-        frame.pack(fill="both", expand=True, padx=10)
-
-        combos = {}
-
-        ttk.Label(frame, text="METRC Source Column (required):").grid(row=0, column=0, sticky="e", pady=6)
-        metrc_var = StringVar(value=metrc_src_detected or "")
-        metrc_cb = ttk.Combobox(frame, textvariable=metrc_var, values=src_cols, width=52, state="readonly")
-        metrc_cb.grid(row=0, column=1, sticky="w", pady=6)
-        ttk.Label(frame, text="⚠ Changing this resets the barcode key", foreground="#aa6600").grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
-
-        def rebuild_non_metrc_dropdown_values():
-            chosen = metrc_var.get().strip()
-            non_metrc = [c for c in src_cols if c != chosen]
-
-            for target, var in combos.items():
-                cb = var["_cb"]
-                if target == "Package Barcode":
-                    var["_var"].set(chosen)
-                    cb.configure(values=[chosen])
-                else:
-                    cb.configure(values=non_metrc)
-                    if var["_var"].get().strip() == chosen:
-                        var["_var"].set("")
-
-        _metrc_prev = [metrc_var.get()]
-        _metrc_warned = [False]
-
-        def _on_metrc_changing(event):
-            new_val = metrc_var.get()
-            if new_val == _metrc_prev[0]:
-                return
-            if not _metrc_warned[0]:
-                ok = messagebox.askokcancel(
-                    "Change METRC Column",
-                    "The METRC source column is used as the Package Barcode key.\n\n"
-                    "Changing it will re-map all barcodes and may clear your current\n"
-                    "excluded / Priority! lists if the barcodes no longer match.\n\n"
-                    "Are you sure you want to change it?",
-                    parent=win,
-                )
-                if not ok:
-                    metrc_var.set(_metrc_prev[0])
-                    metrc_cb.set(_metrc_prev[0])
-                    return
-                _metrc_warned[0] = True
-            _metrc_prev[0] = new_val
-            rebuild_non_metrc_dropdown_values()
-
-        metrc_cb.bind("<<ComboboxSelected>>", _on_metrc_changing)
-
-        row_offset = 1
-        for i, target in enumerate(COLUMNS_TO_USE):
-            ttk.Label(frame, text=target + ":").grid(row=i + row_offset, column=0, sticky="e", pady=4)
-            var = StringVar(value="")
-
-            if target == "Package Barcode":
-                var.set(metrc_var.get().strip())
-                cb = ttk.Combobox(
-                    frame,
-                    textvariable=var,
-                    values=[metrc_var.get().strip()] if metrc_var.get().strip() else src_cols,
-                    width=52,
-                    state="disabled"
-                )
-            else:
-                cb = ttk.Combobox(frame, textvariable=var, values=src_cols, width=52, state="readonly")
-                pre = next((src for src, dst in auto_map.items() if dst == target), None)
-                if pre:
-                    var.set(pre)
-
-            cb.grid(row=i + row_offset, column=1, sticky="w", pady=4)
-            combos[target] = {"_var": var, "_cb": cb}
-
-        rebuild_non_metrc_dropdown_values()
-
-        ttk.Separator(frame, orient="horizontal").grid(
-            row=len(COLUMNS_TO_USE) + row_offset, column=0, columnspan=2, sticky="ew", pady=10
-        )
-
-        opt_start = len(COLUMNS_TO_USE) + row_offset + 1
-        ttk.Label(frame, text="Optional (used by Audit PDFs):", font=("Helvetica", 9, "bold")).grid(
-            row=opt_start, column=0, sticky="e", pady=4
-        )
-
-        opt_vars = {}
-        for j, opt in enumerate(AUDIT_OPTIONAL_FIELDS):
-            ttk.Label(frame, text=f"{opt} (optional):").grid(row=opt_start + 1 + j, column=0, sticky="e", pady=4)
-            v = StringVar(value="")
-            pre = next((src for src, dst in auto_map.items() if dst == opt), None)
-            if pre:
-                v.set(pre)
-            cb = ttk.Combobox(frame, textvariable=v, values=[""] + src_cols, width=52, state="readonly")
-            cb.grid(row=opt_start + 1 + j, column=1, sticky="w", pady=4)
-            opt_vars[opt] = v
-
-        btns = ttk.Frame(win)
-        btns.pack(fill="x", pady=10)
-
-        def _apply_mapping():
-            try:
-                chosen_metrc = metrc_var.get().strip()
-                if not chosen_metrc:
-                    messagebox.showerror("Missing", "Please choose the METRC source column (required).")
-                    return
-
-                mapping = {}
-                used_sources = set()
-
-                mapping[chosen_metrc] = "Package Barcode"
-                used_sources.add(chosen_metrc)
-
-                for target in COLUMNS_TO_USE:
-                    if target == "Package Barcode":
-                        continue
-                    src = combos[target]["_var"].get().strip()
-                    if not src:
-                        messagebox.showerror("Missing", f"Please choose a source for '{target}'.")
-                        return
-                    if src in used_sources:
-                        messagebox.showerror("Duplicate Source", f"The source column '{src}' is used more than once.")
-                        return
-                    used_sources.add(src)
-                    mapping[src] = target
-
-                for opt in AUDIT_OPTIONAL_FIELDS:
-                    src_opt = opt_vars.get(opt).get().strip()
-                    if src_opt:
-                        if src_opt in used_sources:
-                            messagebox.showerror("Duplicate Source", f"The source column '{src_opt}' is already used.")
-                            return
-                        used_sources.add(src_opt)
-                        mapping[src_opt] = opt
-
-                df = self.raw_df.rename(columns=mapping)
-
-                missing = [c for c in COLUMNS_TO_USE if c not in df.columns]
-                if missing:
-                    raise ValueError("After mapping, still missing: " + ", ".join(missing))
-
-                df["Package Barcode"] = df["Package Barcode"].astype("string").fillna("")
-                df["Qty On Hand"] = pd.to_numeric(df["Qty On Hand"], errors="coerce").fillna(0).astype(int)
-                for col in ["Product Name", "Brand", "Type", "Room"]:
-                    df[col] = df[col].astype(str)
-
-                if "Distributor" in df.columns:
-                    df["Distributor"] = df["Distributor"].astype(str).fillna("").str.strip()
-                if "Store" in df.columns:
-                    df["Store"] = df["Store"].astype(str).fillna("").str.strip()
-                if "Size" in df.columns:
-                    df["Size"] = df["Size"].astype(str).fillna("").str.strip()
-
-                self.col_mapping_override = mapping
-                self.current_df = df
-
-                present = set(self.current_df["Package Barcode"].astype(str).fillna("").str.strip().tolist())
-                self.excluded_barcodes = {bc for bc in self.excluded_barcodes if bc in present}
-                self.kuntal_priority_barcodes = {bc for bc in self.kuntal_priority_barcodes if bc in present}
-                self._update_kuntalcount()
-
-                self._update_rowcount(df)
-                self._recompute_from_current()
-                win.destroy()
-                self.status.set("Column mapping applied (METRC forced to Package Barcode).")
-            except Exception as e:
-                messagebox.showerror("Mapping Error", str(e))
-
-        ttk.Button(btns, text="Apply", command=_apply_mapping).pack(side="left", padx=6)
-        ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=6)
-
-    # ------------------------------
-    # Filters helpers
-    # ------------------------------
-    def _get_all_rooms_normalized(self, df: pd.DataFrame) -> List[str]:
-        if df is None or df.empty or "Room" not in df.columns:
-            return []
-        df_norm = normalize_rooms(df, self.room_alias_map)
-        return sorted(set(str(x).strip() for x in df_norm["Room"].dropna().astype(str).tolist()))
-
-    def _get_all_brands(self, df: pd.DataFrame) -> List[str]:
-        if df is None or df.empty or "Brand" not in df.columns:
-            return []
-        vals = sorted(set(str(x).strip() for x in df["Brand"].dropna().astype(str).tolist()))
-        return [v for v in vals if v]
-
-    def _get_all_types(self, df: pd.DataFrame) -> List[str]:
-        if df is None or df.empty or "Type" not in df.columns:
-            return []
-        vals = sorted(set(str(x).strip() for x in df["Type"].dropna().astype(str).tolist()))
-        return [v for v in vals if v]
-
-    def _default_candidate_rooms(self, df: pd.DataFrame) -> List[str]:
-        rooms = self._get_all_rooms_normalized(df)
-        if not rooms:
-            return []
-        room_lookup = {r.strip().lower(): r for r in rooms}
-        desired_keys = ["incoming deliveries", "backstock"]
-        if all(k in room_lookup for k in desired_keys):
-            return [room_lookup[k] for k in desired_keys]
-
-        out = []
-        for r in rooms:
-            r_l = r.strip().lower()
-            if r_l not in SALES_FLOOR_ALIASES and r_l != "sales floor":
-                out.append(r)
-        return out or rooms
+        open_map_columns_dialog(self.root, self.raw_df, on_apply=_on_apply, force=force)
 
     # ------------------------------
     # Filters window
@@ -1173,129 +806,25 @@ class MoveUpGUI:
                 pass
             return
 
-        win = Toplevel(self.root)
-        self.filters_window = win
-        win.title("Filters")
-        win.geometry("1180x860")
-        win.transient(self.root)
-        win.grab_set()
-
-        df = self.current_df
-
-        top = ttk.Frame(win, padding=10)
-        top.pack(fill="x")
-        ttk.Label(top, text="Room Aliases (optional) — normalize messy room names into a clean canonical name.").pack(anchor="w")
-
-        alias_row = ttk.Frame(top)
-        alias_row.pack(fill="x", pady=6)
-
-        alias_from = StringVar(value="")
-        alias_to = StringVar(value="")
-        ttk.Label(alias_row, text="From").pack(side="left")
-        ttk.Entry(alias_row, textvariable=alias_from, width=22).pack(side="left", padx=6)
-        ttk.Label(alias_row, text="To").pack(side="left")
-        ttk.Entry(alias_row, textvariable=alias_to, width=22).pack(side="left", padx=6)
-
-        alias_tree = ttk.Treeview(top, columns=("from", "to"), show="headings", height=4)
-        alias_tree.heading("from", text="From")
-        alias_tree.heading("to", text="To")
-        alias_tree.column("from", width=260, anchor="w")
-        alias_tree.column("to", width=260, anchor="w")
-        alias_tree.pack(fill="x", pady=(6, 0))
-
-        def refresh_alias_tree():
-            for i in alias_tree.get_children():
-                alias_tree.delete(i)
-            for k, v in sorted(self.room_alias_map.items(), key=lambda kv: kv[0].lower()):
-                alias_tree.insert("", "end", values=(k, v))
-
-        def add_alias():
-            f = (alias_from.get() or "").strip()
-            t = (alias_to.get() or "").strip()
-            if not f or not t:
-                messagebox.showinfo("Alias", "Enter both From and To.")
-                return
-            self.room_alias_map[f] = t
-            alias_from.set("")
-            alias_to.set("")
-            refresh_alias_tree()
-            rooms_list.set_items(self._get_all_rooms_normalized(df))
-            self._save_config()
-
-        def remove_alias():
-            sel = alias_tree.selection()
-            if not sel:
-                return
-            for iid in sel:
-                vals = alias_tree.item(iid, "values")
-                if vals and vals[0] in self.room_alias_map:
-                    del self.room_alias_map[vals[0]]
-            refresh_alias_tree()
-            rooms_list.set_items(self._get_all_rooms_normalized(df))
-            self._save_config()
-
-        ttk.Button(alias_row, text="Add/Update", command=add_alias).pack(side="left", padx=6)
-        ttk.Button(alias_row, text="Remove Selected", command=remove_alias).pack(side="left", padx=6)
-        refresh_alias_tree()
-
-        mid = ttk.Frame(win, padding=10)
-        mid.pack(fill="both", expand=True)
-
-        rooms_list = _FilterList(mid, "Rooms (Move-Up source rooms)")
-        brands_list = _FilterList(mid, "Brands (empty = ALL)")
-        types_list = _FilterList(mid, "Types (empty = ALL)")
-
-        rooms = self._get_all_rooms_normalized(df)
-        brands = self._get_all_brands(df)
-        types_ = self._get_all_types(df)
-
-        rooms_list.set_items(rooms)
-        brands_list.set_items(brands)
-        types_list.set_items(types_)
-
-        if self.selected_rooms:
-            rooms_list.set_selected_values(self.selected_rooms)
-        else:
-            rooms_list.set_selected_values(self._default_candidate_rooms(df))
-
-        brands_list.set_selected_values(self.selected_brands)
-        types_list.set_selected_values(self.selected_types)
-
-        bot = ttk.Frame(win, padding=10)
-        bot.pack(fill="x")
-
-        def apply_filters():
-            sel_rooms = rooms_list.get_selected_values()
-            if not sel_rooms:
-                sel_rooms = self._default_candidate_rooms(df)
-
-            self.selected_rooms = sel_rooms
-            self.selected_brands = brands_list.get_selected_values()
-            self.selected_types = types_list.get_selected_values()
-
+        def _on_apply(rooms, brands, types):
+            self.selected_rooms = rooms
+            self.selected_brands = brands
+            self.selected_types = types
             self._save_config()
             self._recompute_from_current()
-            win.destroy()
             self.filters_window = None
 
-        def reset_defaults():
-            self.selected_rooms = []
-            self.selected_brands = []
-            self.selected_types = []
-            rooms_list.set_selected_values(self._default_candidate_rooms(df))
-            brands_list.clear_selection()
-            types_list.clear_selection()
-            self._save_config()
-
-        def _on_close():
-            self.filters_window = None
-            win.destroy()
-
-        ttk.Button(bot, text="Apply", command=apply_filters).pack(side="left")
-        ttk.Button(bot, text="Reset Defaults", command=reset_defaults).pack(side="left", padx=8)
-        ttk.Button(bot, text="Close", command=_on_close).pack(side="left", padx=8)
-
-        win.protocol("WM_DELETE_WINDOW", _on_close)
+        self.filters_window = _dlg_filters(
+            parent=self.root,
+            current_df=self.current_df,
+            room_alias_map=self.room_alias_map,
+            selected_rooms=self.selected_rooms,
+            selected_brands=self.selected_brands,
+            selected_types=self.selected_types,
+            on_apply=_on_apply,
+            on_alias_changed=self._save_config,
+            on_close=lambda: setattr(self, "filters_window", None),
+        )
 
     # ------------------------------
     # Audit window
@@ -1305,416 +834,57 @@ class MoveUpGUI:
             messagebox.showinfo("Audit PDFs", "Import a file first.")
             return
 
-        df = self.current_df.copy()
-        has_dist = "Distributor" in df.columns
-        if has_dist:
-            blanks = (df["Distributor"].astype(str).fillna("").str.strip() == "").sum()
-            self.status.set(f"Audit: Distributor column present. Blank rows: {blanks}/{len(df)}")
-        else:
-            self.status.set("Audit: Distributor column NOT present (will show Unknown Distributor).")
+        def _on_success(msg):
+            if hasattr(self, "dog_widget"):
+                self.dog_widget.react_success(msg)
 
-        if "Distributor" not in df.columns:
-            df["Distributor"] = ""
-        if "Store" not in df.columns:
-            df["Store"] = ""
-        if "Size" not in df.columns:
-            df["Size"] = ""
+        def _on_error(msg):
+            if hasattr(self, "dog_widget"):
+                self.dog_widget.react_error(msg)
 
-        df["Distributor"] = df["Distributor"].astype(str).fillna("").str.strip()
-        df.loc[df["Distributor"] == "", "Distributor"] = "Unknown Distributor"
-
-        df_norm = normalize_rooms(df, self.room_alias_map)
-
-        types_ = sorted(set(df_norm["Type"].dropna().astype(str).str.strip().tolist()))
-        types_ = [t for t in types_ if t]
-
-        brands = sorted(set(df_norm["Brand"].dropna().astype(str).str.strip().tolist()))
-        brands = [b for b in brands if b]
-
-        rooms = self._get_all_rooms_normalized(df_norm)
-
-        dists = sorted(set(df_norm["Distributor"].dropna().astype(str).str.strip().tolist()))
-        dists = [d for d in dists if d]
-
-        dist_to_brands: Dict[str, set] = {}
-        try:
-            sub = df_norm[["Distributor", "Brand"]].copy()
-            sub["Distributor"] = sub["Distributor"].astype(str).str.strip().replace({"": "Unknown Distributor"})
-            sub["Brand"] = sub["Brand"].astype(str).str.strip()
-            sub = sub[(sub["Distributor"] != "") & (sub["Brand"] != "")]
-            for _, r in sub.drop_duplicates().iterrows():
-                dist_to_brands.setdefault(r["Distributor"], set()).add(r["Brand"])
-        except Exception:
-            dist_to_brands = {}
-
-        win = Toplevel(self.root)
-        win.title("Audit PDF Export (Distributor Groups)")
-        win.geometry("1320x820")
-        win.transient(self.root)
-        win.grab_set()
-
-        pad = 10
-        top = ttk.Frame(win, padding=pad)
-        top.pack(fill="x")
-        ttk.Label(
-            top,
-            text="Select filters for the Audit PDFs (Master + Blank). Page breaks follow the Sort Mode.",
-            font=("Helvetica", 10, "bold"),
-        ).pack(anchor="w")
-
-        defaults = ttk.LabelFrame(win, text="Defaults (used if Store/Room missing)", padding=pad)
-        defaults.pack(fill="x", padx=pad, pady=(0, pad))
-
-        default_store_var = StringVar(value="Store")
-        default_room_var = StringVar(value="Sales Floor")
-
-        ttk.Label(defaults, text="Default Store:").pack(side="left")
-        ttk.Entry(defaults, textvariable=default_store_var, width=26).pack(side="left", padx=(6, 18))
-        ttk.Label(defaults, text="Default Room:").pack(side="left")
-        ttk.Entry(defaults, textvariable=default_room_var, width=26).pack(side="left", padx=6)
-
-        title_row = ttk.Frame(win, padding=(pad, 0))
-        title_row.pack(fill="x")
-        title_var = StringVar(value=f"Inventory Audit — {datetime.now().strftime('%m-%d-%Y')}")
-        ttk.Label(title_row, text="Title").pack(side="left")
-        ttk.Entry(title_row, textvariable=title_var).pack(side="left", fill="x", expand=True, padx=8)
-
-        mid = ttk.Frame(win, padding=pad)
-        mid.pack(fill="both", expand=True)
-
-        def make_listbox(col_parent, title, items):
-            frm = ttk.Labelframe(col_parent, text=title, padding=8)
-            frm.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-
-            lb = tk.Listbox(frm, selectmode=tk.EXTENDED, exportselection=False, height=18)
-            lb.pack(side="left", fill="both", expand=True)
-
-            sb = ttk.Scrollbar(frm, orient="vertical", command=lb.yview)
-            sb.pack(side="right", fill="y")
-            lb.config(yscrollcommand=sb.set)
-
-            for it in items:
-                lb.insert(tk.END, it)
-
-            btns = ttk.Frame(frm)
-            btns.pack(fill="x", pady=(6, 0))
-
-            def sel_all():
-                lb.select_set(0, tk.END)
-
-            def sel_none():
-                lb.select_clear(0, tk.END)
-
-            ttk.Button(btns, text="All", command=sel_all).pack(side="left")
-            ttk.Button(btns, text="None", command=sel_none).pack(side="left", padx=6)
-
-            return lb, sel_all, sel_none
-
-        lb_types, types_all, _ = make_listbox(mid, "Types (Category)", types_)
-        lb_brands, brands_all, _brands_none = make_listbox(mid, "Brands", brands)
-        lb_rooms, rooms_all, rooms_none = make_listbox(mid, "Rooms", rooms)
-        lb_dists, dists_all, _ = make_listbox(mid, "Distributors", dists)
-
-        # Select all types EXCEPT accessories (rarely audited with the rest)
-        for i, t in enumerate(types_):
-            if "accessor" not in str(t).lower():
-                lb_types.select_set(i)
-        brands_all()
-        dists_all()
-
-        if rooms:
-            sf_idx = None
-            for i, r in enumerate(rooms):
-                if str(r).strip().lower() == "sales floor":
-                    sf_idx = i
-                    break
-            rooms_none()
-            if sf_idx is not None:
-                lb_rooms.select_set(sf_idx)
-            else:
-                rooms_all()
-
-        def selected_values(lb: tk.Listbox):
-            return [lb.get(i) for i in lb.curselection()]
-
-        def select_brands_for_selected_distributors(_event=None):
-            sel_d = selected_values(lb_dists)
-            if not sel_d:
-                return
-            union = set()
-            for d in sel_d:
-                union |= set(dist_to_brands.get(d, set()))
-            if not union:
-                return
-            lb_brands.select_clear(0, tk.END)
-            for i in range(lb_brands.size()):
-                b = lb_brands.get(i)
-                if b in union:
-                    lb_brands.select_set(i)
-
-        lb_dists.bind("<<ListboxSelect>>", select_brands_for_selected_distributors)
-
-        sort_mode_var = StringVar(value="distributor_type_size_product")
-
-        frm_sort = ttk.LabelFrame(win, text="Sort Mode (controls page breaks)", padding=pad)
-        frm_sort.pack(fill="x", padx=pad, pady=(0, pad))
-
-        ttk.Radiobutton(
-            frm_sort,
-            text="Distributor → Type → Size → Product (page break by Distributor)",
-            variable=sort_mode_var,
-            value="distributor_type_size_product"
-        ).pack(anchor="w")
-
-        ttk.Radiobutton(
-            frm_sort,
-            text="Brand → Type → Product (page break by Brand)",
-            variable=sort_mode_var,
-            value="brand_type_product"
-        ).pack(anchor="w")
-
-        ttk.Radiobutton(
-            frm_sort,
-            text="Type → Brand → Product (page break by Type)",
-            variable=sort_mode_var,
-            value="type_brand_product"
-        ).pack(anchor="w")
-
-        bot = ttk.Frame(win, padding=pad)
-        bot.pack(fill="x")
-
-        def export_now():
-            sel_types = selected_values(lb_types)
-            sel_brands = selected_values(lb_brands)
-            sel_rooms = selected_values(lb_rooms)
-            sel_dists = selected_values(lb_dists)
-
-            if not sel_types:
-                messagebox.showerror("Audit PDFs", "Pick at least one Type.")
-                return
-            if not sel_brands:
-                messagebox.showerror("Audit PDFs", "Pick at least one Brand.")
-                return
-            if not sel_rooms:
-                messagebox.showerror("Audit PDFs", "Pick at least one Room.")
-                return
-            if not sel_dists:
-                messagebox.showerror("Audit PDFs", "Pick at least one Distributor.")
-                return
-
-            use = df_norm[
-                df_norm["Type"].astype(str).isin(sel_types)
-                & df_norm["Brand"].astype(str).isin(sel_brands)
-                & df_norm["Room"].astype(str).isin(sel_rooms)
-                & df_norm["Distributor"].astype(str).isin(sel_dists)
-            ].copy()
-
-            if use.empty:
-                messagebox.showwarning("Audit PDFs", "Nothing matches your selections.")
-                return
-
-            try:
-                master_path, blank_path = export_audit_pdfs(
-                    df=use,
-                    base_dir=self.export_run_dir,
-                    title_text=title_var.get().strip() or "Inventory Audit",
-                    sort_mode=sort_mode_var.get(),
-                    kawaii_pdf=True,
-                    printer_bw=bool(self.printer_bw_var.get()),
-                    auto_open=bool(self.auto_open_var.get()),
-                    default_store=default_store_var.get().strip() or "Store",
-                    default_room=default_room_var.get().strip() or "Sales Floor",
-                    type_trunc_len=TYPE_TRUNC_LEN,
-                )
-
-                self.status.set(f"Audit PDFs saved: {os.path.basename(master_path)} + {os.path.basename(blank_path)}")
-                if hasattr(self, "dog_widget"):
-                    self.dog_widget.react_success("Audit PDFs ✅")
-                win.destroy()
-            except Exception as e:
-                messagebox.showerror("Audit PDFs", str(e))
-                if hasattr(self, "dog_widget"):
-                    self.dog_widget.react_error("Audit failed 💥")
-
-        ttk.Button(bot, text="Export Audit PDFs", command=export_now).pack(side="left")
-        ttk.Button(bot, text="Close", command=win.destroy).pack(side="right")
+        _dlg_audit(
+            parent=self.root,
+            current_df=self.current_df,
+            room_alias_map=self.room_alias_map,
+            export_run_dir=self.export_run_dir,
+            printer_bw=bool(self.printer_bw_var.get()),
+            auto_open=bool(self.auto_open_var.get()),
+            on_status=self.status.set,
+            on_success=_on_success,
+            on_error=_on_error,
+        )
 
     # ------------------------------
     # Tree rendering
     # ------------------------------
     def _refresh_treeview_columns(self, df: "Optional[pd.DataFrame]" = None):
-        """
-        Reconfigure all four treeviews to reflect current display columns.
-        Called when data is loaded or recomputed so Received Date appears/disappears cleanly.
-        """
-        moveup_cols = self._display_cols_for(df)
-
-        # kuntal/excluded/all always show the full COLUMNS_TO_USE set + any extra cols present
-        src = df if df is not None else self.current_df
-        extra_cols = list(COLUMNS_TO_USE)
-        if src is not None and not src.empty:
-            for col in self.DISPLAY_EXTRA_COLUMNS:
-                if col in src.columns and col not in extra_cols:
-                    extra_cols.append(col)
-
-        # Only rebuild if columns actually changed to avoid flicker
-        current_moveup = list(self.tree["columns"])
-        if current_moveup != moveup_cols:
-            self.tree.config(columns=tuple(moveup_cols))
-            self._configure_tree_columns(self.tree, moveup_cols)
-
-        current_extra = list(self.k_tree["columns"])
-        if current_extra != extra_cols:
-            for t in (self.k_tree, self.x_tree, self.all_tree):
-                t.config(columns=tuple(extra_cols))
-                self._configure_tree_columns(t, extra_cols)
+        refresh_treeview_columns(
+            self.tree, self.k_tree, self.x_tree, self.all_tree,
+            self.active_columns, self.DISPLAY_EXTRA_COLUMNS,
+            df if df is not None else self.current_df,
+            self._sort_state, self._sort_tree,
+        )
 
     def _render_tree(self, df: pd.DataFrame):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
-
-        if df is None or df.empty:
-            return
-
-        # Use active_columns + any present extra cols for display
-        display_cols = self._display_cols_for(df)
-        core_cols = COLUMNS_TO_USE
-
-        idx_bar  = core_cols.index("Package Barcode")
-        idx_room = core_cols.index("Room")
-        idx_type = core_cols.index("Type")
-
-        disp_idx_bar  = display_cols.index("Package Barcode") if "Package Barcode" in display_cols else None
-        disp_idx_room = display_cols.index("Room")            if "Room"            in display_cols else None
-        disp_idx_type = display_cols.index("Type")            if "Type"            in display_cols else None
-
-        # Build a lookup for extra (non-core) columns → series for fast access
-        extra_cols = [c for c in display_cols if c not in core_cols]
-        extra_series = {c: df[c].reset_index(drop=True) for c in extra_cols if c in df.columns}
-
-        core_missing = [c for c in core_cols if c not in df.columns]
-        if core_missing:
-            return
-
-        for row_idx, full_row in enumerate(df[core_cols].itertuples(index=False, name=None)):
-            bc = str(full_row[idx_bar]).strip()
-            room_lower = str(full_row[idx_room]).strip().lower()
-            is_backstock = (room_lower == "backstock")
-            is_kuntal = (bc in self.kuntal_priority_barcodes)
-
-            vals = []
-            for c in display_cols:
-                if c in core_cols:
-                    vals.append(full_row[core_cols.index(c)])
-                else:
-                    vals.append(extra_series[c].iloc[row_idx] if c in extra_series else "")
-
-            if disp_idx_type is not None:
-                vals[disp_idx_type] = ellipses(str(vals[disp_idx_type]), TYPE_TRUNC_LEN)
-
-            prefix = ""
-            if is_kuntal:
-                prefix += "🐶🌼 "
-            if is_backstock:
-                prefix += "🚨 "
-            if prefix and disp_idx_room is not None:
-                vals[disp_idx_room] = f"{prefix}{vals[disp_idx_room]}"
-
-            tags = []
-            if bc and (bc in self.excluded_barcodes) and not self.hide_removed_var.get():
-                tags.append("excluded")
-            if is_backstock:
-                tags.append("backstock")
-            if is_kuntal:
-                tags.append("kuntal")
-
-            self.tree.insert("", "end", values=vals, tags=tuple(tags))
-
-        # Configure tag styles (must be set after inserts for ttk Treeview)
-        self.tree.tag_configure("excluded", foreground="#999999")
-        self.tree.tag_configure("backstock", foreground="#cc2222")
-        self.tree.tag_configure("kuntal", foreground="#c0007a")
+        render_moveup_tree(
+            self.tree, df, self._display_cols_for(df),
+            self.kuntal_priority_barcodes, self.excluded_barcodes,
+            self.hide_removed_var.get(),
+        )
 
     def _render_kuntal_tree(self, df: pd.DataFrame):
-        for i in self.k_tree.get_children():
-            self.k_tree.delete(i)
-        if df is None or df.empty:
-            return
-        display_cols = self._display_cols_for(df)
-        core_cols = COLUMNS_TO_USE
-        idx_type = core_cols.index("Type")
-        extra_cols = [c for c in display_cols if c not in core_cols]
-        extra_series = {c: df[c].reset_index(drop=True) for c in extra_cols if c in df.columns}
-        for row_idx, row in enumerate(df[core_cols].itertuples(index=False, name=None)):
-            vals = list(row)
-            vals[idx_type] = ellipses(str(vals[idx_type]), TYPE_TRUNC_LEN)
-            for c in extra_cols:
-                vals.append(extra_series[c].iloc[row_idx] if c in extra_series else "")
-            self.k_tree.insert("", "end", values=vals)
+        render_kuntal_tree(self.k_tree, df, self._display_cols_for(df))
 
     def _render_excluded_tree(self, df: pd.DataFrame):
-        for i in self.x_tree.get_children():
-            self.x_tree.delete(i)
-        if df is None or df.empty:
-            return
-        display_cols = self._display_cols_for(df)
-        core_cols = COLUMNS_TO_USE
-        idx_type = core_cols.index("Type")
-        extra_cols = [c for c in display_cols if c not in core_cols]
-        extra_series = {c: df[c].reset_index(drop=True) for c in extra_cols if c in df.columns}
-        for seq, row in enumerate(df[core_cols].itertuples(index=False, name=None)):
-            vals = list(row)
-            vals[idx_type] = ellipses(str(vals[idx_type]), TYPE_TRUNC_LEN)
-            for c in extra_cols:
-                vals.append(extra_series[c].iloc[seq] if c in extra_series else "")
-            self.x_tree.insert("", "end", iid=f"x_{seq}", values=vals)
+        render_excluded_tree(self.x_tree, df, self._display_cols_for(df))
 
     def _render_all_tree(self, df: Optional[pd.DataFrame]):
-        for i in self.all_tree.get_children():
-            self.all_tree.delete(i)
-
-        if df is None or df.empty:
-            self.all_items_count_var.set("")
-            return
-
-        display_cols = self._display_cols_for(df)
-        core_cols = COLUMNS_TO_USE
-        idx_type = core_cols.index("Type")
-        idx_bar  = core_cols.index("Package Barcode")
-        extra_cols = [c for c in display_cols if c not in core_cols]
-        extra_series = {c: df[c].reset_index(drop=True) for c in extra_cols if c in df.columns}
-
-        q = (self.all_search_var.get() or "").strip().lower()
-        tokens = q.split() if q else []
-
-        shown = 0
-        for row_idx, row in enumerate(df[core_cols].itertuples(index=False, name=None)):
-            vals = list(row)
-            vals[idx_type] = ellipses(str(vals[idx_type]), TYPE_TRUNC_LEN)
-            for c in extra_cols:
-                vals.append(extra_series[c].iloc[row_idx] if c in extra_series else "")
-
-            if tokens:
-                haystack = " ".join(str(v).lower() for v in vals)
-                if not all(t in haystack for t in tokens):
-                    continue
-
-            bc = str(vals[idx_bar]).strip()
-            tags = []
-            if bc in self.excluded_barcodes:
-                tags.append("excluded_all")
-            if bc in self.kuntal_priority_barcodes:
-                tags.append("kuntal_all")
-
-            self.all_tree.insert("", "end", values=vals, tags=tuple(tags))
-            shown += 1
-
-        total = len(df)
-        self.all_items_count_var.set(
-            f"Showing {shown} of {total}" if tokens else f"{total} items"
+        render_all_tree(
+            self.all_tree, df, self._display_cols_for(df),
+            self.all_search_var.get(),
+            self.excluded_barcodes, self.kuntal_priority_barcodes,
+            self.all_items_count_var,
         )
-        self.all_tree.tag_configure("excluded_all", foreground="#999999")
-        self.all_tree.tag_configure("kuntal_all", foreground="#c0007a")
 
 
     # ------------------------------
@@ -1978,87 +1148,19 @@ class MoveUpGUI:
             messagebox.showinfo("Manual Add", "Import a file first.")
             return
 
-        df = self.current_df.copy()
-        missing = [c for c in COLUMNS_TO_USE if c not in df.columns]
-        if missing:
-            messagebox.showerror("Manual Add", "Missing required columns: " + ", ".join(missing))
-            return
-
-        win = Toplevel(self.root)
-        win.title("Manual Add to Priority!")
-        win.geometry("920x620")
-        win.transient(self.root)
-        win.grab_set()
-
-        ttk.Label(win, text="Search inventory. Select one or more, then Add.").pack(anchor="w", padx=10, pady=(10, 6))
-        search_var = StringVar(value="")
-        ent = ttk.Entry(win, textvariable=search_var)
-        ent.pack(fill="x", padx=10)
-
-        frame = ttk.Frame(win)
-        frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        lb = Listbox(frame, selectmode=MULTIPLE, height=22, exportselection=False)
-        lb.pack(side="left", fill="both", expand=True)
-
-        sb = ttk.Scrollbar(frame, orient="vertical", command=lb.yview)
-        sb.pack(side="right", fill="y")
-        lb.config(yscrollcommand=sb.set)
-
-        rows = df[COLUMNS_TO_USE].copy()
-        rows["__bc"] = rows["Package Barcode"].astype(str).fillna("").str.strip()
-        rows["__disp"] = rows.apply(
-            lambda r: f"{r['Brand']} | {r['Product Name']} | {r['Room']} | Qty:{r['Qty On Hand']} | …{str(r['Package Barcode'])[-6:]}",
-            axis=1
-        )
-        rows = rows.sort_values(by=["Brand", "Product Name"], kind="stable").reset_index(drop=True)
-
-        filtered_idx = list(range(len(rows)))
-
-        def refresh_list(*_):
-            nonlocal filtered_idx
-            q = (search_var.get() or "").strip().lower()
-            lb.delete(0, END)
-            if not q:
-                filtered_idx = list(range(len(rows)))
-            else:
-                tokens = q.split()
-
-                def match(i):
-                    s = str(rows.loc[i, "__disp"]).lower() + " " + str(rows.loc[i, "__bc"]).lower()
-                    return all(t in s for t in tokens)
-
-                filtered_idx = [i for i in range(len(rows)) if match(i)]
-
-            for i in filtered_idx[:5000]:
-                lb.insert(END, rows.loc[i, "__disp"])
-
-        def do_add():
-            sel = list(lb.curselection())
-            if not sel:
-                messagebox.showinfo("Manual Add", "Select at least one item.")
-                return
-            added = 0
-            for pos in sel:
-                i = filtered_idx[pos]
-                bc = str(rows.loc[i, "__bc"]).strip()
-                if bc and bc not in self.kuntal_priority_barcodes:
-                    self.kuntal_priority_barcodes.add(bc)
-                    added += 1
+        def _on_apply(added_barcodes):
+            self.kuntal_priority_barcodes |= added_barcodes
             self._update_kuntalcount()
             self._recompute_from_current()
-            self.status.set(f"Manual added {added} item(s) to Priority!")
+            self.status.set(f"Manual added {len(added_barcodes)} item(s) to Priority!")
             self._save_config()
-            win.destroy()
 
-        btns = ttk.Frame(win)
-        btns.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(btns, text="Add Selected", command=do_add).pack(side="left")
-        ttk.Button(btns, text="Close", command=win.destroy).pack(side="left", padx=8)
-
-        search_var.trace_add("write", refresh_list)
-        refresh_list()
-        ent.focus_set()
+        open_manual_add_dialog(
+            parent=self.root,
+            current_df=self.current_df,
+            kuntal_priority_barcodes=self.kuntal_priority_barcodes,
+            on_apply=_on_apply,
+        )
 
     # ------------------------------
     # Data getters
@@ -2095,22 +1197,22 @@ class MoveUpGUI:
     # Effective filters
     # ------------------------------
     def _effective_rooms(self, df: pd.DataFrame) -> List[str]:
-        all_rooms = set(self._get_all_rooms_normalized(df))
+        all_rooms = set(get_all_rooms_normalized(df, self.room_alias_map))
         if self.selected_rooms:
             cleaned = [r for r in self.selected_rooms if r in all_rooms]
             if cleaned:
                 return cleaned
-        return self._default_candidate_rooms(df)
+        return default_candidate_rooms(df, self.room_alias_map)
 
     def _effective_brands(self, df: pd.DataFrame) -> List[str]:
-        all_brands = set(self._get_all_brands(df))
+        all_brands = set(get_all_brands(df))
         if self.selected_brands:
             cleaned = [b for b in self.selected_brands if b in all_brands]
             return cleaned
         return []
 
     def _effective_types(self, df: pd.DataFrame) -> List[str]:
-        all_types = set(self._get_all_types(df))
+        all_types = set(get_all_types(df))
         if self.selected_types:
             cleaned = [t for t in self.selected_types if t in all_types]
             return cleaned

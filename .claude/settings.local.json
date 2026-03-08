@@ -26,7 +26,29 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\(''pdf_export.py'', doraise=True\\); print\\(''pdf_export.py OK''\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''mainExpiring.py'', doraise=True\\); print\\(''mainExpiring.py OK''\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''kawaii_preview.py'', doraise=True\\); print\\(''kawaii_preview.py OK''\\)\")",
-      "Bash(python -c \"import py_compile; py_compile.compile\\(''main.py'', doraise=True\\); print\\(''OK''\\)\")"
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''main.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(wc -l /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(for func in \"compute_moveup_from_df\" \"export_moveup_pdf_paginated\" \"export_audit_pdfs\")",
+      "Bash(do)",
+      "Bash(echo \"=== $func ===\")",
+      "Bash(grep -n \"^def $func\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(done)",
+      "Bash(grep -i \"TODO\\\\|FIXME\\\\|HACK\\\\|XXX\\\\|BUG\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(grep -n \"ellipses\\\\|_fmt_\\\\|truncate\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(grep -n \"sort_with_backstock_priority\\\\|normalize_rooms\\\\|automap_columns\\\\|aggregate_split_packages\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(wc -l \"C:\\\\Users\\\\kubic\\\\PycharmProjects\\\\moveup\"/*.py)",
+      "Bash(wc -l C:UserskubicPycharmProjectsmoveup/*.py)",
+      "Bash(wc -l *.py)",
+      "Bash(sed 's/\"\".*//')",
+      "Bash(grep -E \"^from \\(main|dialogs|tree_ops|config_manager|data_core|pdf_export|kawaii_settings|kawaii_preview|mainExpiring|bisa\\)\" *.py)",
+      "Bash(grep \"from moveu\\\\|import moveup\\\\|from main import\\\\|import main\" *.py)",
+      "Bash(grep \"APP_VERSION\" *.py)",
+      "Bash(for file in dialogs.py tree_ops.py config_manager.py data_core.py pdf_export.py kawaii_settings.py kawaii_preview.py bisa.py mainExpiring.py)",
+      "Bash(do python -c \"import ast; ast.parse\\(open\\(r''$file''\\).read\\(\\)\\); print\\(''$file: OK''\\)\")",
+      "Bash(echo \"$file: SYNTAX ERROR\")",
+      "Bash(ls -lh *.spec bisa_save.json)"
     ]
   }
 }
