@@ -361,6 +361,13 @@ class MoveUpGUI:
         except Exception as e:
             messagebox.showerror("Expiring Soon", f"Could not open window:\n\n{e}")
 
+    def open_sample_manager(self):
+        try:
+            from mainSamples import open_sample_manager
+            open_sample_manager(self.root, self.current_file_path)
+        except Exception as e:
+            messagebox.showerror("Sample Manager", f"Could not open window:\n\n{e}")
+
     # ------------------------------
     # UI
     # ------------------------------
@@ -394,6 +401,12 @@ class MoveUpGUI:
         )
         btn_expiring.pack(side="left", padx=4)
         self._register_button(btn_expiring, "Expiring Soon…")
+
+        btn_samples = ttk.Button(
+            btn_row, text="Sample Manager…", command=self.open_sample_manager,
+        )
+        btn_samples.pack(side="left", padx=4)
+        self._register_button(btn_samples, "Sample Manager…")
 
         # Advanced toggle (ANCHOR target for frm_advanced)
         self.frm_adv_toggle = ttk.Frame(frm_controls)

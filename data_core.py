@@ -15,7 +15,7 @@ APP_VERSION = "4.1"
 APP_NAME = "Konrad's Bisa Inventory Utility"
 
 COLUMNS_TO_USE = ["Type", "Brand", "Product Name", "Package Barcode", "Room", "Qty On Hand"]
-AUDIT_OPTIONAL_FIELDS = ["Distributor", "Store", "Size", "Received Date"]
+AUDIT_OPTIONAL_FIELDS = ["Distributor", "Store", "Size", "Received Date", "Wholesale Cost", "Unit Price"]
 
 TYPE_TRUNC_LEN = 7  # single source (GUI + PDF)
 
@@ -41,6 +41,14 @@ ALT_NAME_CANDIDATES = {
         "received date", "receipt date", "date received", "reception date",
         "receive date", "date of receipt", "received on", "arrival date",
         "intake date", "package date", "packaged date", "harvest date",
+    ],
+    "Wholesale Cost": [
+        "wholesale cost", "wholesale price", "wholesale", "cost",
+        "unit cost", "vendor cost", "supplier cost", "buy price",
+    ],
+    "Unit Price": [
+        "unit price", "retail price", "price", "sell price",
+        "selling price", "retail", "msrp", "srp",
     ],
 }
 
@@ -308,6 +316,10 @@ def automap_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
         out["Store"] = out["Store"].astype(str).fillna("").str.strip()
     if "Size" in out.columns:
         out["Size"] = out["Size"].astype(str).fillna("").str.strip()
+    if "Wholesale Cost" in out.columns:
+        out["Wholesale Cost"] = pd.to_numeric(out["Wholesale Cost"], errors="coerce").fillna(0.0)
+    if "Unit Price" in out.columns:
+        out["Unit Price"] = pd.to_numeric(out["Unit Price"], errors="coerce").fillna(0.0)
 
     # Also catch the raw "Reception Date" column name if it wasn't remapped
     # (e.g. if automap missed it due to skiprows issues on Sweed exports)
