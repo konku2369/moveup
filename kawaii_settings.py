@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
@@ -60,8 +61,8 @@ class KawaiiSettings:
     elem_intensity_pct: int = 100  # multiplies stroke/sparkle/border
 
     # stars intensity: number of stars scales with element intensity
-    stars_base: int = 10
-    stars_max_extra: int = 80      # added at 200% intensity
+    stars_base: int = 18
+    stars_max_extra: int = 140     # added at 200% intensity
 
     def clamp_self(self) -> None:
         if self.preset not in PRESETS_COLOR:
@@ -74,7 +75,11 @@ class KawaiiSettings:
 
 
 def _app_dir() -> str:
-    # keep config next to this module
+    # When running as a PyInstaller exe, __file__ points to the temp _MEIPASS
+    # folder which is cleaned up on exit. Use sys.executable instead so the
+    # settings file lives next to the .exe (same as config_manager.py does).
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
 
@@ -168,17 +173,17 @@ def compute_effective_profile(s: KawaiiSettings) -> Dict[str, object]:
         stroke_rgb = _mix_rgb(PINK_STROKE_RGB, PURPLE_STROKE_RGB, t)
 
     # All element counts scale linearly with elem_intensity (0–200%).
-    # At 100%: stars=base+half_extra, daisies=6, paws=4 (matching old hardcoded defaults).
+    # At 100%: stars=base+half_extra, daisies=9, paws=6.
     el_pct = _clamp(float(s.elem_intensity_pct), 0.0, 200.0)
     t_el = el_pct / 200.0
 
     extra = int(round(t_el * float(s.stars_max_extra)))
     stars_count = int(max(0, s.stars_base + extra))
 
-    # daisies: 2 at 0% → 6 at 100% → 10 at 200%
-    daisy_count = int(max(0, round(2 + t_el * 8)))
-    # paws:    1 at 0% → 4 at 100% → 7 at 200%
-    paw_count = int(max(0, round(1 + t_el * 6)))
+    # daisies: 3 at 0% → 9 at 100% → 15 at 200%
+    daisy_count = int(max(0, round(3 + t_el * 12)))
+    # paws:    2 at 0% → 6 at 100% → 10 at 200%
+    paw_count = int(max(0, round(2 + t_el * 8)))
 
     return {
         "tint_alpha": float(tint_alpha),

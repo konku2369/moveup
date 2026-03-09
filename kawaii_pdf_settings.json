@@ -1,8 +1,8 @@
 {
   "preset": "Extra",
-  "printer_bw": true,
+  "printer_bw": false,
   "bg_hue_pct": 100,
-  "bg_intensity_pct": 300,
+  "bg_intensity_pct": 100,
   "elem_intensity_pct": 300,
   "stars_base": 10,
   "stars_max_extra": 80

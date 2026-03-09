@@ -51,6 +51,9 @@ COL_PATTERNS = {
     "distributor": [r"\bdistributor\b", r"\bvendor\b", r"\bsupplier\b", r"\bproducer\b"],
     "expiry": [r"expir\w*\s*date", r"expir\w+", r"best\s*by", r"use\s*by",
                r"exp\s*date", r"\bexp\b", r"sell\s*by"],
+    "received_date": [r"reception\s*date", r"\breception\b", r"receiv\w*\s*date",
+                      r"date\s*receiv\w*", r"receipt\s*date",
+                      r"packaged?\s*date", r"created?\s*date", r"date\s*packaged?"],
 }
 
 # -------- Theme --------
@@ -275,6 +278,7 @@ class SampleDataModel:
         self.col_metrc6: str | None = None
         self.col_distributor: str | None = None
         self.col_expiry: str | None = None
+        self.col_received_date: str | None = None
 
     def load_file(self, path: str):
         """
@@ -318,6 +322,12 @@ class SampleDataModel:
         self.col_expiry = first_matching_col(df.columns, COL_PATTERNS["expiry"])
         if self.col_expiry and self.col_expiry in df.columns:
             df[self.col_expiry] = pd.to_datetime(df[self.col_expiry], errors="coerce", format="mixed")
+
+        self.col_received_date = "Reception Date" if "Reception Date" in df.columns else \
+            "Received Date" if "Received Date" in df.columns else \
+            first_matching_col(df.columns, COL_PATTERNS["received_date"])
+        if self.col_received_date and self.col_received_date in df.columns:
+            df[self.col_received_date] = pd.to_datetime(df[self.col_received_date], errors="coerce", format="mixed")
 
         # Create derived METRC-6 column
         if self.col_metrc and self.col_metrc in df.columns:
@@ -1157,7 +1167,14 @@ class SampleApp(tk.Toplevel):
         if self.model.col_wholesale_cost and self.model.col_wholesale_cost in df.columns:
             preferred.append(self.model.col_wholesale_cost)
 
-        # Unit Price intentionally hidden from display (still used for retail value in Summary tab)
+        if self.model.col_unit_price and self.model.col_unit_price in df.columns:
+            preferred.append(self.model.col_unit_price)
+
+        if self.model.col_received_date and self.model.col_received_date in df.columns:
+            preferred.append(self.model.col_received_date)
+
+        if self.model.col_expiry and self.model.col_expiry in df.columns:
+            preferred.append(self.model.col_expiry)
 
         cols, seen = [], set()
         for c in preferred:

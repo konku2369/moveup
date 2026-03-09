@@ -124,17 +124,17 @@ def _draw_random_stars(canvas, w, h, stroke_col, sparkle_alpha, count, seed):
         band = rng.randint(0, 3)
         if band == 0:       # bottom margin strip
             x = rng.uniform(44, w - 44)
-            y = rng.uniform(28, 70)
+            y = rng.uniform(28, 72)
         elif band == 1:     # top margin strip
             x = rng.uniform(44, w - 44)
-            y = rng.uniform(h - 70, h - 28)
+            y = rng.uniform(h - 72, h - 28)
         elif band == 2:     # left margin strip
-            x = rng.uniform(28, 50)
-            y = rng.uniform(70, h - 70)
+            x = rng.uniform(28, 52)
+            y = rng.uniform(72, h - 72)
         else:               # right margin strip
-            x = rng.uniform(w - 50, w - 28)
-            y = rng.uniform(70, h - 70)
-        r = rng.uniform(3.5, 8.5)
+            x = rng.uniform(w - 52, w - 28)
+            y = rng.uniform(72, h - 72)
+        r = rng.uniform(4.0, 13.0)
         _draw_star(canvas, x, y, r)
 
     canvas.restoreState()
@@ -203,12 +203,20 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     stroke_a = float(prof.get("stroke_alpha", 0.08))
     sparkle_a = float(prof.get("sparkle_alpha", 0.06))
     border_a = float(prof.get("border_alpha", 0.09))
-    stars_count = int(prof.get("stars_count", 10))
-    daisy_count = int(prof.get("daisy_count", 6))
-    paw_count = int(prof.get("paw_count", 4))
+    stars_count = int(prof.get("stars_count", 18))
+    daisy_count = int(prof.get("daisy_count", 9))
+    paw_count = int(prof.get("paw_count", 6))
 
     sr, sg, sb = prof.get("stroke_rgb", (0.55, 0.40, 0.50))
     stroke_col = Color(float(sr), float(sg), float(sb))
+
+    # Per-export jitter RNG — different each PDF, same across all pages of one PDF
+    jitter_seed = int(prof.get("jitter_seed", 42))
+    rng = random.Random(jitter_seed)
+
+    def _jx(): return rng.uniform(-w * 0.018, w * 0.018)
+    def _jy(): return rng.uniform(-h * 0.018, h * 0.018)
+    def _jrot(): return rng.uniform(-20, 20)
 
     # --- Tint wash (skip in B/W — keep background pure white) ---
     if tint_a > 0 and not is_bw:
@@ -225,7 +233,7 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     canvas.rect(margin, margin + 18, w - 2 * margin, h - (2 * margin + 34), stroke=1, fill=0)
 
     # --- Big corner daisy (bottom-right margin, away from table content) ---
-    cx, cy = w * 0.84, h * 0.11
+    cx, cy = w * 0.84 + _jx() * 0.5, h * 0.11 + _jy() * 0.5
     canvas.saveState()
     _set_alpha(canvas, stroke_a)
     canvas.setStrokeColor(stroke_col)
@@ -235,7 +243,7 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     petal_r = 64
     petal_dist = 112
     canvas.translate(cx, cy)
-    canvas.rotate(18)
+    canvas.rotate(rng.uniform(0, 30))
 
     for i in range(petals):
         canvas.saveState()
@@ -254,50 +262,60 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     canvas.setStrokeColor(stroke_col)
     canvas.setLineWidth(1.0)
 
-    # Fixed sparkle points — all in outer margin bands, never over table content
+    # Fixed sparkle points with small jitter — outer margin bands only
     sparkle_points = [
-        (w * 0.14, h * 0.07, 9),   # bottom-left margin
-        (w * 0.86, h * 0.07, 8),   # bottom-right margin
-        (w * 0.08, h * 0.50, 7),   # mid-left margin
-        (w * 0.92, h * 0.50, 7),   # mid-right margin
-        (w * 0.50, h * 0.05, 6),   # bottom-center margin
+        (w * 0.14, h * 0.07, 9),
+        (w * 0.86, h * 0.07, 8),
+        (w * 0.08, h * 0.50, 7),
+        (w * 0.92, h * 0.50, 7),
+        (w * 0.50, h * 0.05, 6),
+        (w * 0.25, h * 0.04, 7),
+        (w * 0.75, h * 0.04, 7),
     ]
     for x, y, r in sparkle_points:
-        _draw_star(canvas, x, y, r)
+        _draw_star(canvas, x + _jx(), y + _jy(), r * rng.uniform(0.8, 1.2))
 
     # --- Random stars (count driven by element intensity setting) ---
     if stars_count > 0:
-        _draw_random_stars(canvas, w, h, stroke_col, sparkle_a, stars_count, seed=42)
+        _draw_random_stars(canvas, w, h, stroke_col, sparkle_a, stars_count, seed=jitter_seed + 1)
 
-    # --- Daisies & paws (pool ordered so first entries are drawn at lower intensity) ---
+    # --- Daisies (pool of 15 — ordered so first entries appear at lower intensity) ---
     # All positions placed in outer margin bands — never over the table content area
     daisy_positions = [
-        (w * 0.05, h * 0.12, 0.95),   # 1 – bottom-left corner
-        (w * 0.95, h * 0.12, 0.95),   # 2 – bottom-right corner
-        (w * 0.04, h * 0.88, 0.85),   # 3 – top-left corner
-        (w * 0.96, h * 0.88, 0.85),   # 4 – top-right corner
-        (w * 0.50, h * 0.06, 0.75),   # 5 – bottom-center
-        (w * 0.50, h * 0.94, 0.75),   # 6 – top-center
-        (w * 0.04, h * 0.50, 0.75),   # 7 – mid-left edge
-        (w * 0.96, h * 0.50, 0.75),   # 8 – mid-right edge
-        (w * 0.04, h * 0.33, 0.60),   # 9 – lower-mid-left edge
-        (w * 0.96, h * 0.33, 0.60),   # 10 – lower-mid-right edge
+        (w * 0.05, h * 0.12, 0.95),   #  1 – bottom-left corner
+        (w * 0.95, h * 0.12, 0.95),   #  2 – bottom-right corner
+        (w * 0.04, h * 0.88, 0.85),   #  3 – top-left corner
+        (w * 0.96, h * 0.88, 0.85),   #  4 – top-right corner
+        (w * 0.50, h * 0.06, 0.75),   #  5 – bottom-center
+        (w * 0.50, h * 0.94, 0.75),   #  6 – top-center
+        (w * 0.04, h * 0.50, 0.75),   #  7 – mid-left edge
+        (w * 0.96, h * 0.50, 0.75),   #  8 – mid-right edge
+        (w * 0.04, h * 0.33, 0.65),   #  9 – lower-mid-left edge
+        (w * 0.96, h * 0.33, 0.65),   # 10 – lower-mid-right edge
+        (w * 0.04, h * 0.25, 0.60),   # 11 – left edge, lower quarter
+        (w * 0.96, h * 0.25, 0.60),   # 12 – right edge, lower quarter
+        (w * 0.04, h * 0.67, 0.60),   # 13 – left edge, upper quarter
+        (w * 0.96, h * 0.67, 0.60),   # 14 – right edge, upper quarter
+        (w * 0.28, h * 0.05, 0.55),   # 15 – bottom, quarter-left
     ]
     for x, y, s in daisy_positions[:daisy_count]:
-        _draw_daisy(canvas, x, y, s, stroke_col, stroke_a)
+        _draw_daisy(canvas, x + _jx(), y + _jy(), s, stroke_col, stroke_a)
 
-    # All positions placed in outer margin bands — never over the table content area
+    # --- Paws (pool of 10) ---
     paw_positions = [
-        (w * 0.08, h * 0.10, 0.80),   # 1 – bottom-left corner
-        (w * 0.92, h * 0.10, 0.80),   # 2 – bottom-right corner
-        (w * 0.07, h * 0.88, 0.75),   # 3 – top-left corner
-        (w * 0.93, h * 0.88, 0.75),   # 4 – top-right corner
-        (w * 0.50, h * 0.04, 0.70),   # 5 – bottom-center
-        (w * 0.50, h * 0.96, 0.70),   # 6 – top-center
-        (w * 0.04, h * 0.65, 0.65),   # 7 – left side mid
+        (w * 0.08, h * 0.10, 0.80),   #  1 – bottom-left corner
+        (w * 0.92, h * 0.10, 0.80),   #  2 – bottom-right corner
+        (w * 0.07, h * 0.88, 0.75),   #  3 – top-left corner
+        (w * 0.93, h * 0.88, 0.75),   #  4 – top-right corner
+        (w * 0.50, h * 0.04, 0.70),   #  5 – bottom-center
+        (w * 0.50, h * 0.96, 0.70),   #  6 – top-center
+        (w * 0.04, h * 0.65, 0.65),   #  7 – left side mid
+        (w * 0.96, h * 0.65, 0.65),   #  8 – right side mid
+        (w * 0.04, h * 0.42, 0.60),   #  9 – left side low-mid
+        (w * 0.96, h * 0.42, 0.60),   # 10 – right side low-mid
     ]
     for x, y, s in paw_positions[:paw_count]:
-        _draw_paw(canvas, x, y, s, stroke_col, stroke_a)
+        _draw_paw(canvas, x + _jx(), y + _jy(), s, stroke_col, stroke_a)
 
     canvas.restoreState()
 
@@ -308,17 +326,46 @@ def _draw_page(canvas, doc, kawaii_pdf: bool, prof: Optional[dict] = None):
     _draw_footer(canvas, doc)
 
 
-def _table_style_kawaii(printer_bw: bool):
+def _table_style_kawaii(printer_bw: bool, prof: Optional[dict] = None):
+    def _bw(v):
+        return max(0.0, min(1.0, v))
+
+    def _blend_w(rgb, alpha):
+        a = max(0.0, min(1.0, alpha))
+        return Color(_bw(a * rgb[0] + (1 - a)), _bw(a * rgb[1] + (1 - a)), _bw(a * rgb[2] + (1 - a)))
+
     if printer_bw:
-        header_bg = Color(0.92, 0.92, 0.92)
-        row_a = Color(1.0, 1.0, 1.0)
-        row_b = Color(0.95, 0.95, 0.95)
-        grid = Color(0.75, 0.75, 0.75)
+        if prof:
+            ta = float(prof.get("tint_alpha", 0.007))
+            ba = float(prof.get("border_alpha", 0.04))
+            grey = (0.5, 0.5, 0.5)
+            # At 0% intensity: ta→0, all blends → white. At Cute BW 100% → old hardcoded greys.
+            header_bg = _blend_w(grey, min(ta * 23.0, 0.40))   # ta=0.007 → 0.92 grey
+            row_a     = Color(1.0, 1.0, 1.0)                    # BW row_a was white; keep white
+            row_b     = _blend_w(grey, min(ta * 14.0, 0.30))   # ta=0.007 → 0.95 grey
+            grid      = _blend_w(grey, min(ba * 12.5, 0.55))   # ba=0.04  → 0.75 grey
+        else:
+            header_bg = Color(0.92, 0.92, 0.92)
+            row_a = Color(1.0, 1.0, 1.0)
+            row_b = Color(0.95, 0.95, 0.95)
+            grid = Color(0.75, 0.75, 0.75)
     else:
-        header_bg = Color(0.96, 0.90, 0.95)
-        row_a = Color(0.995, 0.965, 0.985)
-        row_b = Color(0.98, 0.92, 0.96)
-        grid = Color(0.72, 0.68, 0.74)
+        if prof:
+            ta = float(prof.get("tint_alpha", 0.055))
+            ba = float(prof.get("border_alpha", 0.10))
+            tint = prof.get("tint_rgb", (1.00, 0.86, 0.92))
+            stroke = prof.get("stroke_rgb", (0.55, 0.40, 0.50))
+            # At 0% intensity: ta→0, all blends → white.
+            # At Cute/100% pink (ta≈0.055, ba≈0.10) → matches old hardcoded colors exactly.
+            header_bg = _blend_w(tint,   min(ta * 12.0, 0.70))  # ta=0.055 → ~(0.96, 0.90, 0.95)
+            row_a     = _blend_w(tint,   min(ta * 4.5,  0.30))  # ta=0.055 → ~(0.995, 0.965, 0.985)
+            row_b     = _blend_w(tint,   min(ta * 10.0, 0.60))  # ta=0.055 → ~(0.98, 0.92, 0.96)
+            grid      = _blend_w(stroke, min(ba * 5.0,  0.65))  # ba=0.10  → ~(0.72, 0.68, 0.74)
+        else:
+            header_bg = Color(0.96, 0.90, 0.95)
+            row_a = Color(0.995, 0.965, 0.985)
+            row_b = Color(0.98, 0.92, 0.96)
+            grid = Color(0.72, 0.68, 0.74)
     return header_bg, row_a, row_b, grid
 
 
@@ -350,7 +397,8 @@ def _build_moveup_page_elements(
     df_chunk: pd.DataFrame,
     title: str,
     kawaii_pdf: bool,
-    printer_bw: bool
+    printer_bw: bool,
+    prof: Optional[dict] = None,
 ):
     styles = getSampleStyleSheet()
     elements: List = []
@@ -367,7 +415,7 @@ def _build_moveup_page_elements(
     table = Table(table_data, colWidths=widths)
 
     if kawaii_pdf:
-        header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw)
+        header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw, prof=prof)
     else:
         header_bg = colors.lightgrey
         row_a = colors.gainsboro
@@ -405,6 +453,7 @@ def _build_audit_page_elements(
     kawaii_pdf: bool,
     printer_bw: bool,
     barcode_header: str = "METRC",
+    prof: Optional[dict] = None,
 ):
     """
     df_chunk must have columns:
@@ -430,7 +479,7 @@ def _build_audit_page_elements(
     table = Table(table_data, colWidths=widths)
 
     if kawaii_pdf:
-        header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw)
+        header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw, prof=prof)
     else:
         header_bg = colors.lightgrey
         row_a = colors.gainsboro
@@ -508,16 +557,17 @@ def export_moveup_pdf_paginated(
     combined = pd.concat([prio, back_raw, other_raw], ignore_index=True)
 
     title = "Move-Up Inventory List"
+    prof = _kawaii_profile_from_settings(printer_bw) if kawaii_pdf else None
+    if prof is not None:
+        prof["jitter_seed"] = random.randint(0, 999999)
 
     if not combined.empty:
         combined_pdf_df = _prep_moveup_table_df(combined)
         for start in range(0, len(combined_pdf_df), items_per_page):
             chunk = combined_pdf_df.iloc[start:start + items_per_page]
-            elements += _build_moveup_page_elements(chunk, title, kawaii_pdf, printer_bw)
+            elements += _build_moveup_page_elements(chunk, title, kawaii_pdf, printer_bw, prof=prof)
             if start + items_per_page < len(combined_pdf_df):
                 elements.append(PageBreak())
-
-    prof = _kawaii_profile_from_settings(printer_bw) if kawaii_pdf else None
 
     doc.build(
         elements,
@@ -658,6 +708,7 @@ def export_audit_pdfs(
                 kawaii_pdf=kawaii_pdf,
                 printer_bw=printer_bw,
                 barcode_header=barcode_header,
+                prof=audit_prof,
             )
 
             if gi < len(groups) - 1:
@@ -670,6 +721,8 @@ def export_audit_pdfs(
         )
 
     audit_prof = _kawaii_profile_from_settings(printer_bw) if kawaii_pdf else None
+    if audit_prof is not None:
+        audit_prof["jitter_seed"] = random.randint(0, 999999)
 
     _build(master_path, "master")
     _build(blank_path, "blank")

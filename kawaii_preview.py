@@ -61,7 +61,6 @@ class KawaiiPreviewDialog:
         self.preset_var = tk.StringVar(value=self.settings.preset)
 
         self.bg_hue_pct = tk.IntVar(value=self.settings.bg_hue_pct)                 # 0..100
-        self.bg_intensity_pct = tk.IntVar(value=self.settings.bg_intensity_pct)     # 0..300
         self.elem_intensity_pct = tk.IntVar(value=self.settings.elem_intensity_pct) # 0..300
 
         self.readout = tk.StringVar(value="")
@@ -106,10 +105,6 @@ class KawaiiPreviewDialog:
         ttk.Scale(left, from_=0, to=100, orient="horizontal",
                   variable=self.bg_hue_pct, command=lambda _v: self._save_now()).pack(fill="x", pady=(2, 10))
 
-        ttk.Label(left, text="BG Intensity (tint alpha)").pack(anchor="w")
-        ttk.Scale(left, from_=0, to=300, orient="horizontal",
-                  variable=self.bg_intensity_pct, command=lambda _v: self._save_now()).pack(fill="x", pady=(2, 10))
-
         ttk.Label(left, text="Element Intensity (everything pretty)").pack(anchor="w")
         ttk.Scale(left, from_=0, to=300, orient="horizontal",
                   variable=self.elem_intensity_pct, command=lambda _v: self._save_now()).pack(fill="x", pady=(2, 12))
@@ -127,7 +122,7 @@ class KawaiiPreviewDialog:
             preset=str(self.preset_var.get()),
             printer_bw=bool(self.printer_bw.get()),
             bg_hue_pct=int(self.bg_hue_pct.get()),
-            bg_intensity_pct=int(self.bg_intensity_pct.get()),
+            bg_intensity_pct=100,
             elem_intensity_pct=int(self.elem_intensity_pct.get()),
             # Preserve stars tuning from loaded settings (no UI slider for these)
             stars_base=self.settings.stars_base,
@@ -150,7 +145,6 @@ class KawaiiPreviewDialog:
         self.printer_bw.set(s.printer_bw)
         self.preset_var.set(s.preset)
         self.bg_hue_pct.set(s.bg_hue_pct)
-        self.bg_intensity_pct.set(s.bg_intensity_pct)
         self.elem_intensity_pct.set(s.elem_intensity_pct)
         self._resetting = False
         save_settings(self._to_settings())
@@ -233,11 +227,9 @@ class KawaiiPreviewDialog:
         paw_count = int(prof.get("paw_count", 4))
         preset_name = prof.get("preset", "")
         bg_hue = prof.get("bg_hue_pct", 0)
-        bg_int = prof.get("bg_intensity_pct", 100)
         el_int = prof.get("elem_intensity_pct", 100)
         self.readout.set(
-            f"Mode: {mode} | Preset: {preset_name} | Hue: {bg_hue}% Purple | "
-            f"BG: {bg_int}% | Elem: {el_int}%\n"
+            f"Mode: {mode} | Preset: {preset_name} | Hue: {bg_hue}% Purple | Elem: {el_int}%\n"
             f"Effective a tint/stroke/sparkle/border: "
             f"{tint_a:.3f}/{stroke_a:.3f}/{sparkle_a:.3f}/{border_a:.3f} | "
             f"Stars: {stars} | Daisies: {daisy_count} | Paws: {paw_count}"
