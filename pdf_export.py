@@ -10,6 +10,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.lib.colors import Color
 from kawaii_settings import load_settings, compute_effective_profile
+import math
 import random
 import subprocess
 
@@ -140,6 +141,24 @@ def _draw_random_stars(canvas, w, h, stroke_col, sparkle_alpha, count, seed):
     canvas.restoreState()
 
 
+def _draw_random_cats(canvas, w, h, stroke_col, stroke_alpha, count, seed):
+    rng = random.Random(seed)
+    for _ in range(int(count)):
+        band = rng.randint(0, 3)
+        if band == 0:       # bottom margin
+            x = rng.uniform(50, w - 50)
+            y = rng.uniform(30, 78)
+        elif band == 1:     # top margin
+            x = rng.uniform(50, w - 50)
+            y = rng.uniform(h - 78, h - 30)
+        elif band == 2:     # left margin
+            x = rng.uniform(30, 58)
+            y = rng.uniform(78, h - 78)
+        else:               # right margin
+            x = rng.uniform(w - 58, w - 30)
+            y = rng.uniform(78, h - 78)
+        scale = rng.uniform(0.28, 0.58)
+        _draw_cat_face(canvas, x, y, scale, stroke_col, stroke_alpha)
 
 
 
@@ -185,6 +204,49 @@ def _draw_paw(canvas, x: float, y: float, scale: float, stroke_col: Color, alpha
     canvas.restoreState()
 
 
+def _draw_cat_face(canvas, x: float, y: float, scale: float, stroke_col: Color, alpha: float):
+    canvas.saveState()
+    _set_alpha(canvas, alpha)
+    canvas.setStrokeColor(stroke_col)
+
+    r = 9 * scale
+
+    # Head
+    canvas.setLineWidth(max(0.6, 1.1 * scale))
+    canvas.circle(x, y, r, stroke=1, fill=0)
+
+    # Ears — two pointed triangles on top
+    canvas.setLineWidth(max(0.5, 0.9 * scale))
+    for side in (-1, 1):
+        ex = x + side * 6.5 * scale
+        ey_base = y + r * 0.6
+        p = canvas.beginPath()
+        p.moveTo(ex - 4 * scale, ey_base)
+        p.lineTo(ex + 4 * scale, ey_base)
+        p.lineTo(ex + side * 2.5 * scale, ey_base + 8 * scale)
+        p.close()
+        canvas.drawPath(p, stroke=1, fill=0)
+
+    # Eyes
+    canvas.setLineWidth(max(0.5, 0.8 * scale))
+    canvas.circle(x - 3 * scale, y + 1.5 * scale, 1.8 * scale, stroke=1, fill=0)
+    canvas.circle(x + 3 * scale, y + 1.5 * scale, 1.8 * scale, stroke=1, fill=0)
+
+    # Nose
+    canvas.circle(x, y - 1.5 * scale, 1.0 * scale, stroke=1, fill=0)
+
+    # Whiskers — 3 per side, fanning slightly up/flat/down
+    canvas.setLineWidth(max(0.4, 0.6 * scale))
+    wlen = 7 * scale
+    wy = y - 1.5 * scale
+    for side in (-1, 1):
+        x0 = x + side * 1.8 * scale
+        for dy in (-wlen * 0.35, 0.0, wlen * 0.35):
+            canvas.line(x0, wy, x0 + side * wlen, wy + dy)
+
+    canvas.restoreState()
+
+
 def _kawaii_profile_from_settings(printer_bw: bool) -> dict:
     """Load settings once and compute the effective profile."""
     s = load_settings()
@@ -206,6 +268,7 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     stars_count = int(prof.get("stars_count", 18))
     daisy_count = int(prof.get("daisy_count", 9))
     paw_count = int(prof.get("paw_count", 6))
+    cat_count = int(prof.get("cat_count", 4))
 
     sr, sg, sb = prof.get("stroke_rgb", (0.55, 0.40, 0.50))
     stroke_col = Color(float(sr), float(sg), float(sb))
@@ -316,6 +379,10 @@ def _draw_kawaii_background(canvas, doc, prof: dict):
     ]
     for x, y, s in paw_positions[:paw_count]:
         _draw_paw(canvas, x + _jx(), y + _jy(), s, stroke_col, stroke_a)
+
+    # --- Cat faces — scattered randomly like stars, as many as stars ---
+    if cat_count > 0:
+        _draw_random_cats(canvas, w, h, stroke_col, stroke_a, cat_count, seed=jitter_seed + 2)
 
     canvas.restoreState()
 

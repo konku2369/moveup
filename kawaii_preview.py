@@ -115,6 +115,10 @@ class KawaiiPreviewDialog:
         ttk.Button(btn_row, text="Save", command=self._save_now).pack(side="left", padx=8)
         ttk.Button(btn_row, text="Close", command=self._on_close).pack(side="left", padx=8)
 
+        test_row = ttk.Frame(left)
+        test_row.pack(fill="x", pady=(0, 4))
+        ttk.Button(test_row, text="📄 Generate Test PDF", command=self._generate_test_pdf).pack(side="left")
+
         ttk.Label(left, textvariable=self.readout, foreground="#444").pack(anchor="w", pady=(12, 0))
 
     def _to_settings(self) -> KawaiiSettings:
@@ -223,6 +227,25 @@ class KawaiiPreviewDialog:
         for dx, dy, _ in daisy_positions[:daisy_count]:
             self._daisy(c, int(dx), int(dy), d_r, line_col)
 
+        cat_count = int(prof.get("cat_count", 18))
+        cat_rng = random.Random(1338)
+        for _ in range(cat_count):
+            band = cat_rng.randint(0, 3)
+            if band == 0:
+                cx2 = cat_rng.randint(int(w * 0.08), int(w * 0.92))
+                cy2 = cat_rng.randint(int(h * 0.02), int(h * 0.12))
+            elif band == 1:
+                cx2 = cat_rng.randint(int(w * 0.08), int(w * 0.92))
+                cy2 = cat_rng.randint(int(h * 0.88), int(h * 0.98))
+            elif band == 2:
+                cx2 = cat_rng.randint(int(w * 0.01), int(w * 0.09))
+                cy2 = cat_rng.randint(int(h * 0.12), int(h * 0.88))
+            else:
+                cx2 = cat_rng.randint(int(w * 0.91), int(w * 0.99))
+                cy2 = cat_rng.randint(int(h * 0.12), int(h * 0.88))
+            cat_r = cat_rng.randint(int(min(w, h) * 0.018), int(min(w, h) * 0.038))
+            self._cat_face(c, cx2, cy2, cat_r, line_col)
+
         mode = "B/W" if prof["printer_bw"] else "Color"
         paw_count = int(prof.get("paw_count", 4))
         preset_name = prof.get("preset", "")
@@ -232,7 +255,7 @@ class KawaiiPreviewDialog:
             f"Mode: {mode} | Preset: {preset_name} | Hue: {bg_hue}% Purple | Elem: {el_int}%\n"
             f"Effective a tint/stroke/sparkle/border: "
             f"{tint_a:.3f}/{stroke_a:.3f}/{sparkle_a:.3f}/{border_a:.3f} | "
-            f"Stars: {stars} | Daisies: {daisy_count} | Paws: {paw_count}"
+            f"Stars: {stars} | Daisies: {daisy_count} | Paws: {paw_count} | Cats: {cat_count}"
         )
 
     @staticmethod
@@ -254,6 +277,78 @@ class KawaiiPreviewDialog:
             c.create_oval(px - petal_r, py - petal_r, px + petal_r, py + petal_r, outline=color, width=2)
         center_r = int(r * 0.7)
         c.create_oval(x - center_r, y - center_r, x + center_r, y + center_r, outline=color, width=2)
+
+    @staticmethod
+    def _cat_face(c: tk.Canvas, x: int, y: int, r: int, color: str):
+        # Head
+        c.create_oval(x - r, y - r, x + r, y + r, outline=color, width=2)
+        # Ears — two triangles
+        for side in (-1, 1):
+            ex = x + side * int(r * 0.72)
+            ey_base = y - int(r * 0.6)
+            tip_x = ex + side * int(r * 0.28)
+            tip_y = ey_base - int(r * 0.85)
+            c.create_polygon(
+                ex - int(r * 0.44), ey_base,
+                ex + int(r * 0.44), ey_base,
+                tip_x, tip_y,
+                outline=color, fill="", width=2
+            )
+        # Eyes
+        er = max(2, int(r * 0.20))
+        c.create_oval(x - int(r * 0.35) - er, y - int(r * 0.15) - er,
+                      x - int(r * 0.35) + er, y - int(r * 0.15) + er, outline=color, width=2)
+        c.create_oval(x + int(r * 0.35) - er, y - int(r * 0.15) - er,
+                      x + int(r * 0.35) + er, y - int(r * 0.15) + er, outline=color, width=2)
+        # Nose
+        nr = max(1, int(r * 0.11))
+        c.create_oval(x - nr, y + int(r * 0.17) - nr, x + nr, y + int(r * 0.17) + nr,
+                      outline=color, width=2)
+        # Whiskers — 3 per side
+        wlen = int(r * 0.78)
+        wy = y + int(r * 0.17)
+        for side in (-1, 1):
+            x0 = x + side * int(r * 0.20)
+            for dy in (-int(wlen * 0.35), 0, int(wlen * 0.35)):
+                c.create_line(x0, wy, x0 + side * wlen, wy + dy, fill=color, width=1)
+
+    def _generate_test_pdf(self):
+        """Generate a small sample move-up PDF with the current kawaii settings and open it."""
+        try:
+            import tempfile
+            import pandas as pd
+            from pdf_export import export_moveup_pdf_paginated
+
+            self._save_now()  # make sure current settings are persisted before generating
+
+            dummy = pd.DataFrame([
+                ["1A4050300012345", "Flower",        "Green Thumb",  "Blue Dream 3.5g",            "Backstock", 4],
+                ["1A4050300012346", "Flower",        "Harvest Moon", "OG Kush 1g Pre-Pack",        "Backstock", 12],
+                ["1A4050300012347", "Vapes",         "CloudCo",      "Pineapple Express Cart 1g",  "Backstock", 7],
+                ["1A4050300012348", "Edibles",       "Sweet Leaf",   "Gummies Watermelon 100mg",   "Backstock", 3],
+                ["1A4050300012349", "Concentrates",  "Wax Works",    "Live Resin 1g",              "Backstock", 5],
+                ["1A4050300012350", "Pre-Rolls",     "RollEasy",     "Pre-Roll 5 Pack",            "Backstock", 8],
+                ["1A4050300012351", "Flower",        "Green Thumb",  "Gelato #41 7g",              "Backstock", 2],
+                ["1A4050300012352", "Tinctures",     "HerbCraft",    "CBD:THC 1:1 Tincture 30ml",  "Backstock", 6],
+                ["1A4050300012353", "Flower",        "Harvest Moon", "Sunset Sherbet 3.5g",        "Backstock", 9],
+                ["1A4050300012354", "Vapes",         "CloudCo",      "Watermelon Zkittlez Cart",   "Backstock", 4],
+            ], columns=["Package Barcode", "Type", "Brand", "Product Name", "Room", "Qty On Hand"])
+
+            tmp_dir = tempfile.mkdtemp(prefix="moveup_kawaii_test_")
+            printer_bw = bool(self.printer_bw.get())
+            export_moveup_pdf_paginated(
+                move_up_df=dummy,
+                priority_df=None,
+                base_dir=tmp_dir,
+                timestamp=False,
+                prefix="KawaiiTest",
+                auto_open=True,
+                kawaii_pdf=True,
+                printer_bw=printer_bw,
+            )
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror("Test PDF Error", str(e), parent=self.win)
 
     def _on_close(self):
         # always save current state on close

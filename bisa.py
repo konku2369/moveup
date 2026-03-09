@@ -642,6 +642,17 @@ class AsciiDogWidget:
         self._random_trick_label.pack(pady=(2, 0))
         self._random_trick_label.bind("<Button-1>", lambda _e: self._play_random_trick())
 
+        self._help_label = tk.Label(
+            self.frame,
+            text="📋 help",
+            font=("Segoe UI", 8),
+            bg=self._theme_bg,
+            fg=self._theme_hint,
+            cursor="hand2",
+        )
+        self._help_label.pack(pady=(1, 0))
+        self._help_label.bind("<Button-1>", lambda _e: self._show_help_popup())
+
         self._render_frame(self.IDLE_FRAMES[0])
         self._idle_loop()
 

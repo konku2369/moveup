@@ -184,6 +184,8 @@ def compute_effective_profile(s: KawaiiSettings) -> Dict[str, object]:
     daisy_count = int(max(0, round(3 + t_el * 12)))
     # paws:    2 at 0% → 6 at 100% → 10 at 200%
     paw_count = int(max(0, round(2 + t_el * 8)))
+    # cats: same scale as stars — a fuck-ton at high intensity
+    cat_count = int(max(0, s.stars_base + int(round(t_el * float(s.stars_max_extra)))))
 
     return {
         "tint_alpha": float(tint_alpha),
@@ -195,6 +197,7 @@ def compute_effective_profile(s: KawaiiSettings) -> Dict[str, object]:
         "stars_count": stars_count,
         "daisy_count": daisy_count,
         "paw_count": paw_count,
+        "cat_count": cat_count,
         "printer_bw": bool(s.printer_bw),
         "preset": s.preset,
         "bg_hue_pct": int(s.bg_hue_pct),
