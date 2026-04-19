@@ -1,0 +1,12 @@
+# Core
+pandas>=2.0
+openpyxl>=3.1           # .xlsx / .xlsm read & write
+reportlab>=4.0          # PDF generation
+
+# Additional file format support
+xlrd>=2.0               # .xls (legacy Excel 97-2003)
+pyxlsb>=1.0             # .xlsb (Excel Binary)
+odfpy>=1.4              # .ods (LibreOffice / OpenDocument)
+
+# Build (not needed at runtime)
+# pyinstaller>=6.0
