@@ -12,16 +12,48 @@ import tkinter as tk
 from tkinter import simpledialog
 
 class AsciiDogWidget:
-    """Animated ASCII companion widget — Bisa the cat.
+    """
+    Animated ASCII cat companion widget — Bisa (she/her).
 
-    - click her to pet (receive_pet)
-    - click box/blank space to throw her a treat (throw_treat_at_window_x / frame click)
-    - stats counter (pets/treats)
-    - react_* methods used by the app
-    - idle micro-animations (wag, blink, sleep, zoomies)
-    - contextual reactions (success/warning/error)
-    - seasonal theme accents (Oct/Dec)
-    - rare "legendary" easter egg (1% chance)
+    A Tkinter ``Frame``-based widget that displays Bisa as ASCII art and reacts
+    to user interactions and app events with frame-by-frame animations.  She
+    lives in the top-right corner of the main window.
+
+    Interaction methods (called by the user or UI events):
+    - ``receive_pet()`` — triggered by clicking on her ASCII art.
+    - ``throw_treat_at_window_x()`` — triggered by clicking the blank space in
+      her frame; treat animation varies by click distance from her.
+    - Typing ``"sit"``, ``"shake"``, ``"spin"``, ``"daisy"``, ``"zoomies"`` etc.
+      while her frame is focused triggers secret trick animations (``TRICKS``).
+
+    Reaction methods (called by the main app on events):
+    - ``react_data_loaded()`` — file import succeeded.
+    - ``react_moveups()`` — move-up SKUs detected between imports.
+    - ``react_excluded()`` / ``react_restored()`` — item excluded/un-excluded.
+    - ``react_success()`` / ``react_warning()`` / ``react_error()`` — export/op result.
+    - ``greet_startup()`` — greeting animation based on time of day.
+
+    State management:
+    - ``restore_state()`` — call once after construction to hydrate persisted stats.
+    - ``get_state()`` — returns a dict suitable for JSON persistence.
+    - ``_state`` attribute tracks the current animation state; most reactions
+      are no-ops if ``_state != "idle"`` to avoid animation conflicts.
+
+    Idle system:
+    - ``_idle_loop()`` / ``_idle_tick()`` periodically trigger micro-animations
+      (blink, wag, scratch, sniff, sleep) based on weighted probabilities.
+    - 1% chance of a "legendary" animation on pet/treat interactions.
+    - Milestone animations trigger every 60–100 interactions.
+
+    Catnip reward system:
+    - Bisa earns catnip: 1 per 20 pets/treats, 1 per 10 moveup events.
+    - Redeemable via a button in her stats area.
+    - Redemption count is persisted across sessions.
+
+    Seasonal theming:
+    - October: orange-and-black Halloween palette.
+    - December: teal-and-white holiday palette.
+    - Otherwise: default lavender/purple palette.
     """
 
     # ------------------------------
@@ -518,6 +550,24 @@ class AsciiDogWidget:
     ]
 
     def __init__(self, parent: tk.Widget, name: str = "Bisa", on_rename=None):
+        """
+        Initialise Bisa and build her Tk widget inside *parent*.
+
+        Does not call ``restore_state()`` — the caller must do that after
+        construction to hydrate persisted lifetime stats from the config file.
+        ``greet_startup()`` should also be called explicitly after construction.
+
+        Parameters
+        ----------
+        parent : tk.Widget
+            The container widget (typically the right side of the main toolbar).
+        name : str
+            Display name shown in her title label.  Defaults to ``"Bisa"``.
+        on_rename : callable | None
+            Optional callback ``fn(new_name: str)`` invoked when the user
+            renames her via the double-click dialog, so the main app can
+            persist the change.
+        """
         self.parent = parent
         self._name = name
         self._on_rename = on_rename
@@ -743,7 +793,31 @@ class AsciiDogWidget:
     def restore_state(self, *, pets=0, treats=0, moveups=0,
                       catnip_redeemed=0, on_catnip_change=None,
                       on_activity=None):
-        """Hydrate persisted lifetime stats (call once after construction)."""
+        """
+        Hydrate Bisa with persisted lifetime stats.  Call once after construction.
+
+        Should be called from ``MoveUpGUI.__init__()`` after ``_build_ui()``
+        creates the widget, using values loaded from ``ConfigManager``.  Also
+        registers the catnip-change and activity callbacks so they are available
+        for the rest of the session.
+
+        Parameters
+        ----------
+        pets : int
+            Lifetime pet count from the config file.
+        treats : int
+            Lifetime treat count.
+        moveups : int
+            Lifetime move-up count (used for catnip earning calculation).
+        catnip_redeemed : int
+            Number of catnip treats already redeemed in past sessions.
+        on_catnip_change : callable | None
+            ``fn(redeemed_count: int)`` called when the user redeems catnip,
+            so the main app can persist the updated count.
+        on_activity : callable | None
+            ``fn(event_type: str, detail: str)`` called for all significant
+            events (pets, treats, loads, etc.) for telemetry/logging.
+        """
         self._total_pets = pets
         self._total_treats = treats
         self._total_moveups = moveups
@@ -753,7 +827,18 @@ class AsciiDogWidget:
         self._update_stats()
 
     def get_state(self) -> dict:
-        """Return dict of all persistable state for serialization."""
+        """
+        Return all persistable state as a dict for JSON serialisation.
+
+        Called by ``MoveUpGUI._save_config()`` on every config save.  The
+        returned dict is written into ``ConfigManager`` and persisted to disk.
+
+        Returns
+        -------
+        dict
+            Keys: ``"name"``, ``"total_pets"``, ``"total_treats"``,
+            ``"total_moveups"``, ``"catnip_redeemed"``.
+        """
         return {
             "name": self._name,
             "total_pets": self._total_pets,
@@ -986,6 +1071,14 @@ class AsciiDogWidget:
             print(f"[moveup] Bisa click error: {e}")
 
     def receive_pet(self):
+        """
+        Bisa receives a pet — triggered when the user clicks her ASCII art.
+
+        No-op if she is already animating (``_state != "idle"``).  Increments
+        ``_total_pets``, emits an activity event, and runs a PET_FRAMES →
+        HAPPY_FRAMES animation sequence.  May trigger a legendary animation
+        (1% chance) or a milestone animation instead of the standard sequence.
+        """
         if self._state != "idle":
             return
 
@@ -1005,6 +1098,21 @@ class AsciiDogWidget:
                                               lambda: self._return_idle()))
 
     def throw_treat_at_window_x(self, window_x: int, window_width: int):
+        """
+        Throw a treat at Bisa from the given window X coordinate.
+
+        The distance of the throw determines the animation: TREAT_SHORT (<30%
+        of window width from Bisa), TREAT_MEDIUM (30–65%), or TREAT_FAR (>65%).
+        Bisa runs out to catch the treat then runs back.  Increments
+        ``_total_treats``.  No-op if she is already animating.
+
+        Parameters
+        ----------
+        window_x : int
+            X coordinate of the click in the root window's coordinate space.
+        window_width : int
+            Total width of the root window, used to compute relative distance.
+        """
         if self._state != "idle":
             return
 
@@ -1356,6 +1464,12 @@ class AsciiDogWidget:
     # Reactions (kept)
     # ------------------------------
     def celebrate(self):
+        """
+        Play a generic celebration animation (HAPPY_FRAMES).
+
+        No-op if she is not currently idle.  Does not increment any stat counter
+        — use ``react_moveups()`` when move-up events are the cause.
+        """
         if self._state != "idle":
             return
         self._cancel()
@@ -1368,6 +1482,17 @@ class AsciiDogWidget:
                        lambda: self._return_idle())
 
     def react_data_loaded(self, row_count: int = 0):
+        """
+        Bisa reacts to a successful file import.
+
+        Plays LOAD_FRAMES animation.  Accepts idle or happy state (can
+        interrupt a prior celebrate).
+
+        Parameters
+        ----------
+        row_count : int
+            Number of rows loaded (used in the emitted activity event).
+        """
         if self._state not in ("idle", "happy"):
             return
         self._emit("loaded", f"{row_count} rows")
@@ -1393,6 +1518,7 @@ class AsciiDogWidget:
         )
 
     def react_excluded(self, count: int = 1):
+        """Bisa looks sad when the user excludes an item from the move-up list."""
         if self._state != "idle":
             return
         self._cancel()
@@ -1401,6 +1527,7 @@ class AsciiDogWidget:
                        lambda: self._return_idle())
 
     def react_restored(self, count: int = 1):
+        """Bisa celebrates when an excluded item is restored to the move-up list."""
         if self._state != "idle":
             return
         self._cancel()
@@ -1409,6 +1536,7 @@ class AsciiDogWidget:
                        lambda: self._return_idle())
 
     def react_row_selected(self):
+        """Bisa perks up when the user selects a row in a treeview (alert → sniff)."""
         if self._state != "idle":
             return
         self._cancel()
@@ -1418,6 +1546,7 @@ class AsciiDogWidget:
                                               lambda: self._return_idle()))
 
     def react_kuntal(self, count: int = 1):
+        """Bisa reacts excitedly when an item is starred as Priority."""
         if self._state != "idle":
             return
         self._cancel()
@@ -1426,6 +1555,7 @@ class AsciiDogWidget:
                        lambda: self._return_idle())
 
     def react_cleared(self):
+        """Bisa reacts when the Priority or Excluded list is cleared."""
         if self._state != "idle":
             return
         self._cancel()
@@ -1437,6 +1567,16 @@ class AsciiDogWidget:
     # New contextual reactions
     # ------------------------------
     def react_success(self, msg: str = "nice!! \u2705"):
+        """
+        Bisa celebrates a successful operation (e.g. PDF exported).
+
+        Plays SUCCESS_FRAMES + WAG_FRAMES.  No-op if not idle.
+
+        Parameters
+        ----------
+        msg : str
+            Short message shown in her status label during the animation.
+        """
         if self._state != "idle":
             return
         self._emit("success", msg)
@@ -1446,6 +1586,16 @@ class AsciiDogWidget:
         self._run_anim(frames, msg, int(250 * self._speed_scale), lambda: self._return_idle())
 
     def react_warning(self, msg: str = "uh oh\u2026 \u26a0\ufe0f"):
+        """
+        Bisa reacts to a warning or minor error.
+
+        Plays WARNING_FRAMES.  No-op if not idle.
+
+        Parameters
+        ----------
+        msg : str
+            Short message shown in her status label during the animation.
+        """
         if self._state != "idle":
             return
         self._emit("warning", msg)
@@ -1454,6 +1604,16 @@ class AsciiDogWidget:
         self._run_anim(self.WARNING_FRAMES, msg, int(320 * self._speed_scale), lambda: self._return_idle())
 
     def react_error(self, msg: str = "nope\u2026 \U0001f4a5"):
+        """
+        Bisa reacts to an error (e.g. failed PDF export).
+
+        Plays CONFUSED_FRAMES.  No-op if not idle.
+
+        Parameters
+        ----------
+        msg : str
+            Short message shown in her status label during the animation.
+        """
         if self._state != "idle":
             return
         self._emit("error", msg)
@@ -1503,7 +1663,8 @@ if __name__ == "__main__":
         try:
             with open(_SAVE_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            print(f"[moveup] Bisa save load failed (starting fresh): {e}")
             return {}
 
     def _write_save():

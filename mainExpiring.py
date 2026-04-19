@@ -1,4 +1,10 @@
-# sweed_soon_to_expire.py
+"""
+Expiring items analysis window.
+
+Toplevel window that loads a METRC export independently, detects expiration
+date columns via pattern matching, and displays items grouped by expiration
+urgency. Supports PDF export and configurable day-range thresholds.
+"""
 # Sweed "Soon To Expire" Viewer (v7)
 # - Subtle/tasteful kawaii UI theme (always on)
 # - Toggle: Include missing expiration dates (default ON)
@@ -31,11 +37,18 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
+from themes import MOVEUP_THEME, apply_theme
+from data_core import truncate_text
+
 
 APP_TITLE = "Sweed - Soon To Expire Viewer"
 
+# Columns that must exist for header-row auto-detection in Excel/CSV files.
 HEADER_DETECT_REQUIRED_COLS = ["Product Name", "Expiration Date"]
 
+# Regex patterns for auto-detecting which column serves which role.
+# All patterns are case-insensitive, substring-matching (no anchors unless explicit).
+# first_matching_col() tries each pattern in order and returns the first match.
 COL_PATTERNS = {
     "expiration": [r"expiration\s*date", r"\bexpir", r"\bexp\b", r"expires?", r"best\s*by", r"use\s*by"],
     "product": [r"product\s*name", r"\bproduct\b"],
@@ -45,42 +58,17 @@ COL_PATTERNS = {
     "location": [r"\blocation\b"],
     "available_qty": [r"available\s*qty", r"\bavailable\b"],
     "qty": [r"^\s*qty\s*$", r"quantity", r"on\s*hand", r"count"],
-
-    # NEW: detect METRC / package tag-ish columns
     "metrc": [r"\bmetrc\b", r"\btag\b", r"rfid", r"package\s*tag", r"package\s*id", r"metrc\s*tag"],
 }
 
+# Product types excluded from the expiring report (not worth tracking expiry for)
 DEFAULT_EXCLUSIONS = ["accessory", "accessories"]
-
-# -------- Theme --------
-MOVEUP_THEME = {
-    "bg": "#EEEAF8",
-    "label_fg": "#3A2869",
-    "tree_bg": "#F6F4FC",
-    "tree_sel": "#C3B1E8",
-    "btn_bg": "#EDEAF7",
-    "btn_bg_active": "#DED9F0",
-    "btn_fg": "#1F2328",
-    "btn_border": "#7251A8",
-}
 
 # ----------------------------
 # Truncation rules
 # ----------------------------
 TRUNCATE_SUBCATEGORY_TO = 18
 TRUNCATE_PRODUCT_TO = 60
-
-# ----------------------------
-# Helpers
-# ----------------------------
-
-def truncate_text(val, max_len: int) -> str:
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return ""
-    s = str(val)
-    if len(s) <= max_len:
-        return s
-    return s[: max(0, max_len - 1)] + "…"
 
 
 def open_file_with_default_app(path: str):
@@ -116,6 +104,7 @@ def metrc_last6(val) -> str:
 
 
 def first_matching_col(columns, patterns):
+    """Return the first column name matching any regex in *patterns*, or None."""
     cols = list(columns)
     for pat in patterns:
         rx = re.compile(pat, re.IGNORECASE)
@@ -126,6 +115,7 @@ def first_matching_col(columns, patterns):
 
 
 def detect_header_row_excel(path, max_rows=20):
+    """Scan the first *max_rows* of an Excel file for the header row containing required columns."""
     preview = pd.read_excel(path, header=None, nrows=max_rows)
 
     def norm(x):
@@ -141,6 +131,7 @@ def detect_header_row_excel(path, max_rows=20):
 
 
 def detect_header_row_csv(path, max_rows=20):
+    """Scan the first *max_rows* of a CSV file for the header row containing required columns."""
     preview = pd.read_csv(path, header=None, nrows=max_rows, dtype=str, encoding_errors="ignore")
 
     def norm(x):
@@ -156,6 +147,7 @@ def detect_header_row_csv(path, max_rows=20):
 
 
 def parse_date_series(series: pd.Series) -> pd.Series:
+    """Parse a Series to datetime, handling both string dates and Excel serial numbers."""
     s = series.copy()
 
     if pd.api.types.is_numeric_dtype(s):
@@ -226,6 +218,8 @@ def df_to_pdf(
     product_col: str | None = None,
     metrc6_col: str | None = None,
 ):
+    """Export a single DataFrame to a landscape PDF table with optional kawaii styling."""
+
     def _find_available_qty_col_index(cols: list[str]) -> int | None:
         for i, c in enumerate(cols):
             name = str(c).strip().lower()
@@ -334,7 +328,22 @@ def df_to_pdf(
 # ----------------------------
 
 class DataModel:
+    """
+    Data model for expiring items: loads a METRC file, detects columns, filters by days-to-expire.
+
+    Standalone from main.py's data pipeline because the Expiring window runs as an
+    independent Toplevel with its own file import. Does not share state with MoveUpGUI.
+    """
+
     def __init__(self):
+        """
+        Initialise a blank DataModel with no data loaded.
+
+        All ``col_*`` attributes start as ``None``; they are set by
+        ``load_file()`` to the detected column names from the loaded file.
+        ``df_raw`` holds the original loaded DataFrame; ``df_filtered`` holds
+        the last result of ``filter_expiring()``.
+        """
         self.df_raw: pd.DataFrame | None = None
         self.df_filtered: pd.DataFrame | None = None
 
@@ -351,6 +360,28 @@ class DataModel:
         self.col_metrc6 = None  # the derived display/sort/export column ("METRC-6")
 
     def load_file(self, path: str):
+        """
+        Load an inventory file and detect all relevant columns.
+
+        Supports ``.xlsx`` and ``.csv``.  Uses ``detect_header_row_excel()`` /
+        ``detect_header_row_csv()`` to skip any preceding summary rows before
+        the real column header.  After reading, performs column detection with
+        ``first_matching_col()`` using the patterns in ``COL_PATTERNS``:
+
+        - ``col_exp``: expiration date column (required)
+        - ``col_product``: product name (required)
+        - ``col_available``: available / qty column
+        - ``col_location``: location/room column
+        - ``col_category``: product type/category
+        - ``col_subcategory``: sub-category (if present)
+        - ``col_brand``: brand
+        - ``col_metrc``: full METRC tag column
+        - ``col_metrc6``: derived ``"METRC-6"`` column (last 6 chars of METRC tag)
+
+        Expiration dates are parsed and coerced to ``datetime64`` via
+        ``parse_date_series()``.  Raises ``ValueError`` if either the
+        expiration or product column cannot be found.
+        """
         ext = os.path.splitext(path)[1].lower()
         if ext == ".xlsx":
             header_row = detect_header_row_excel(path)
@@ -402,6 +433,43 @@ class DataModel:
         exclude_keywords: list[str],
         location_filter: list[str] | None = None,
     ):
+        """
+        Filter the loaded DataFrame to expiring items and store in ``df_filtered``.
+
+        Filtering pipeline:
+        1. Compute a cutoff date = today + *days*.
+        2. Select rows where expiration date is before the cutoff (``mask_soon``).
+        3. If *include_expired* is ``False``, further restrict to dates ≥ today.
+        4. Optionally include rows with missing/null expiration (``mask_missing``).
+        5. Apply keyword exclusions: any row where Category, METRC-6, or Product
+           Name contains any exclusion keyword (case-insensitive) is dropped.
+        6. Apply *location_filter* if provided (exact match against room column).
+        7. Compute ``"Days To Expire"`` column for sorting.
+        8. Apply free-text *search* across all string columns.
+        9. Sort by ``Days To Expire`` ascending (most urgent first).
+
+        Sets ``self.df_filtered`` to the result and also returns it.
+
+        Parameters
+        ----------
+        days : int
+            Days-ahead window; items expiring within this range are included.
+        include_expired : bool
+            If ``True``, also include items that have already expired.
+        include_missing : bool
+            If ``True``, also include items with no expiration date.
+        search : str
+            Free-text search applied across all string columns.
+        exclude_keywords : list[str]
+            Product type keywords to exclude (e.g. ``["accessory"]``).
+        location_filter : list[str] | None
+            Restrict to specific locations.  ``None`` = no location filter.
+
+        Returns
+        -------
+        pd.DataFrame | None
+            Filtered DataFrame, or ``None`` if no data is loaded.
+        """
         if self.df_raw is None:
             return None
 
@@ -447,6 +515,19 @@ class DataModel:
         return df
 
     def build_action_list(self) -> pd.DataFrame | None:
+        """
+        Build the structured, export-ready action list from ``df_filtered``.
+
+        Selects and standardises columns: Location, Category, METRC-6, Brand,
+        Product Name, Expiration Date, Days To Expire, Available Qty.  Missing
+        columns are created as empty strings rather than causing KeyErrors.
+        Sorted by: Location → Category → METRC-6 → Expiration Date → Product Name.
+
+        Returns
+        -------
+        pd.DataFrame | None
+            Sorted action list, or ``None`` if ``df_filtered`` is empty.
+        """
         if self.df_filtered is None or self.df_filtered.empty:
             return None
 
@@ -485,7 +566,39 @@ class DataModel:
 
         return out
 
-    def build_bucket_summary(self, max_days: int, include_expired: bool, include_missing: bool, buckets: list[tuple[str, int, int]]):
+    def build_bucket_summary(
+        self,
+        max_days: int,
+        include_expired: bool,
+        include_missing: bool,
+        buckets: list[tuple[str, int, int]],
+    ):
+        """
+        Group ``df_filtered`` into time buckets and return a summary table + per-bucket DataFrames.
+
+        Parameters
+        ----------
+        max_days : int
+            Upper bound on ``Days To Expire`` for inclusion in date buckets.
+        include_expired : bool
+            If ``True``, a special ``"Expired"`` bucket is prepended for items
+            with ``Days To Expire < 0``.
+        include_missing : bool
+            If ``True``, a ``"Missing Expiration"`` bucket is appended for
+            items with no expiration date.
+        buckets : list[tuple[str, int, int]]
+            Each element is ``(label, lo_days, hi_days)`` defining the
+            day-range for one bucket row (inclusive bounds).
+
+        Returns
+        -------
+        tuple[pd.DataFrame, dict[str, pd.DataFrame]]
+            ``(summary_df, bucket_map)`` where *summary_df* has columns
+            ``["Bucket", "Items", "Available Qty (sum)", "Earliest Exp",
+            "Latest Exp"]`` and *bucket_map* maps each bucket label to the
+            corresponding filtered DataFrame.  Returns ``(empty DataFrame, {})``
+            if no filtered data exists.
+        """
         if self.df_filtered is None:
             return pd.DataFrame(), {}
 
@@ -545,6 +658,16 @@ class DataModel:
 # ----------------------------
 
 class TableView(ttk.Frame):
+    """
+    Scrollable treeview widget with sortable columns and auto-width sizing.
+
+    Wraps a ``ttk.Treeview`` with vertical and horizontal scrollbars.  Heading
+    clicks toggle ascending/descending sort (numeric-aware: tries
+    ``pd.to_numeric`` first, falls back to string sort).  Column widths are
+    auto-sized from the column name length.  Truncation via *trunc_map* is
+    applied at render time so the underlying data is not mutated.
+    """
+
     def __init__(self, parent):
         super().__init__(parent)
         self.tree = ttk.Treeview(self, columns=(), show="headings")
@@ -674,6 +797,24 @@ class TableView(ttk.Frame):
 # ----------------------------
 
 class App(tk.Toplevel):
+    """
+    Expiring Items viewer — Toplevel window for expiration date analysis.
+
+    Loads an inventory file independently (not shared with the main app window)
+    via ``DataModel.load_file()``.  Displays items grouped into urgency buckets
+    (e.g. "0-7 days", "8-14 days", "15-30 days") selected by clicking the
+    bucket summary table.
+
+    Features:
+    - Dynamic day-range threshold (spinbox) with live recalculation
+    - Include/exclude expired items and items with missing expiration dates
+    - Location (room) filter
+    - Free-text search with debounce
+    - Keyword exclusion list (e.g. ``"accessory"``)
+    - CSV, Excel, and PDF export (normal or kawaii palette)
+    - Auto-opens PDF on Windows after export
+    """
+
     def __init__(self, master):
         super().__init__(master)
         self.title(APP_TITLE)
@@ -715,7 +856,7 @@ class App(tk.Toplevel):
         if self._debounce_job is not None:
             try:
                 self.after_cancel(self._debounce_job)
-            except Exception:
+            except (tk.TclError, ValueError):
                 pass
             self._debounce_job = None
         self.destroy()
@@ -733,61 +874,7 @@ class App(tk.Toplevel):
         return m
 
     def apply_subtle_theme(self):
-        style = ttk.Style()
-        try:
-            base = style.theme_use()
-            style.theme_use("clam")
-        except Exception:
-            base = style.theme_use()
-
-        t = MOVEUP_THEME
-
-        if "moveup_match" not in style.theme_names():
-            style.theme_create(
-                "moveup_match",
-                parent=base,
-                settings={
-                    "TFrame": {"configure": {"background": t["bg"]}},
-                    "TLabel": {"configure": {"background": t["bg"], "foreground": t["label_fg"]}},
-                    "TCheckbutton": {"configure": {"background": t["bg"], "foreground": t["label_fg"]}},
-                    "TNotebook": {"configure": {"background": t["bg"]}},
-                    "TNotebook.Tab": {
-                        "configure": {"background": t["bg"], "foreground": t["label_fg"], "padding": (12, 6)},
-                    },
-                    "TButton": {
-                        "configure": {
-                            "padding": 6,
-                            "relief": "solid",
-                            "borderwidth": 1,
-                            "background": t["btn_bg"],
-                            "foreground": t["btn_fg"],
-                        },
-                        "map": {
-                            "background": [("active", t["btn_bg_active"]), ("pressed", t["btn_bg_active"])],
-                            "foreground": [("active", t["btn_fg"]), ("pressed", t["btn_fg"])],
-                        },
-                    },
-                    "Treeview": {
-                        "configure": {
-                            "background": t["tree_bg"],
-                            "fieldbackground": t["tree_bg"],
-                            "foreground": "#333333",
-                            "rowheight": 24,
-                        },
-                        "map": {
-                            "background": [("selected", t["tree_sel"])],
-                            "foreground": [("selected", "#000000")],
-                        },
-                    },
-                    "Treeview.Heading": {
-                        "configure": {"background": t["bg"], "foreground": t["label_fg"]}
-                    },
-                    "TEntry": {"configure": {"fieldbackground": "white", "foreground": "#1F2328"}},
-                },
-            )
-
-        style.theme_use("moveup_match")
-        self.configure(background=t["bg"])
+        apply_theme(self, "moveup_match")
 
     def _build_ui(self):
         top = ttk.Frame(self, padding=10)
@@ -912,7 +999,13 @@ class App(tk.Toplevel):
         if path is None:
             path = filedialog.askopenfilename(
                 title="Select Sweed Inventory Export",
-                filetypes=[("Excel Files", "*.xlsx"), ("CSV Files", "*.csv"), ("All Files", "*.*")],
+                filetypes=[
+                    ("All Supported", "*.xlsx *.xls *.xlsm *.xlsb *.ods *.csv *.tsv *.txt *.tab"),
+                    ("Excel", "*.xlsx *.xls *.xlsm *.xlsb"),
+                    ("CSV / Text", "*.csv *.tsv *.txt *.tab"),
+                    ("OpenDocument", "*.ods"),
+                    ("All Files", "*.*"),
+                ],
                 initialdir=self._last_dir,
             )
         if not path:
@@ -1008,12 +1101,16 @@ class App(tk.Toplevel):
         if self.model.col_brand and self.model.col_brand in df.columns:
             preferred.append(self.model.col_brand)
 
-        preferred.append(self.model.col_product)
+        if self.model.col_product and self.model.col_product in df.columns:
+            preferred.append(self.model.col_product)
 
         if self.model.col_available and self.model.col_available in df.columns:
             preferred.append(self.model.col_available)
 
-        preferred += [self.model.col_exp, "Days To Expire"]
+        if self.model.col_exp and self.model.col_exp in df.columns:
+            preferred.append(self.model.col_exp)
+        if "Days To Expire" in df.columns:
+            preferred.append("Days To Expire")
 
         cols, seen = [], set()
         for c in preferred:
@@ -1092,13 +1189,16 @@ class App(tk.Toplevel):
         if self.model.col_brand and self.model.col_brand in df.columns:
             cols.append(self.model.col_brand)
 
-        cols.append(self.model.col_product)
+        if self.model.col_product and self.model.col_product in df.columns:
+            cols.append(self.model.col_product)
 
         if self.model.col_available and self.model.col_available in df.columns:
             cols.append(self.model.col_available)
 
-        cols += [self.model.col_exp, "Days To Expire"]
-        cols = [c for c in cols if c in df.columns]
+        if self.model.col_exp and self.model.col_exp in df.columns:
+            cols.append(self.model.col_exp)
+        if "Days To Expire" in df.columns:
+            cols.append("Days To Expire")
 
         self.bucket_detail_cols = cols
         self.bucket_detail_table.render(df, cols, trunc_map=self._build_trunc_map())

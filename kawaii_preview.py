@@ -1,6 +1,9 @@
-# kawaii_preview.py
-# Popup: Kawaii PDF Settings + Live Preview
-# Uses kawaii_settings.py for persistence and math.
+"""
+Live preview dialog for kawaii PDF settings.
+
+Tk Canvas-based preview that mirrors pdf_export.py decoration rendering
+in real time as the user adjusts sliders. Persists via kawaii_settings.py.
+"""
 
 from __future__ import annotations
 
@@ -20,12 +23,40 @@ from kawaii_settings import (
 )
 
 def _rgb01_to_hex(rgb):
+    """Convert a 0–1 float RGB tuple to a Tk-compatible '#rrggbb' hex string.
+
+    Parameters
+    ----------
+    rgb : tuple[float, float, float]
+        RGB components in [0.0, 1.0]. Values are clamped before conversion.
+
+    Returns
+    -------
+    str
+        Hex color string, e.g. ``'#ff80a0'``.
+    """
     r = int(max(0, min(1, rgb[0])) * 255)
     g = int(max(0, min(1, rgb[1])) * 255)
     b = int(max(0, min(1, rgb[2])) * 255)
     return f"#{r:02x}{g:02x}{b:02x}"
 
 def _mix_hex(a_hex: str, b_hex: str, t: float) -> str:
+    """Linearly interpolate between two hex colors.
+
+    Parameters
+    ----------
+    a_hex : str
+        Start color (t=0), with or without leading '#'.
+    b_hex : str
+        End color (t=1), with or without leading '#'.
+    t : float
+        Blend factor in [0.0, 1.0]; clamped before use. 0 → a, 1 → b.
+
+    Returns
+    -------
+    str
+        Interpolated '#rrggbb' hex string.
+    """
     t = max(0.0, min(1.0, t))
     a_hex = a_hex.lstrip("#")
     b_hex = b_hex.lstrip("#")
@@ -37,6 +68,26 @@ def _mix_hex(a_hex: str, b_hex: str, t: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 def _blend_over_white(hex_color: str, alpha: float) -> str:
+    """Composite *hex_color* at *alpha* over a pure white background.
+
+    Implements the standard Porter-Duff 'over white' formula:
+      out = alpha * color + (1 − alpha) * 255
+
+    Used by the preview canvas to approximate the semi-transparent PDF tint wash,
+    since Tk Canvas doesn't support real alpha fills.
+
+    Parameters
+    ----------
+    hex_color : str
+        Foreground color, with or without leading '#'.
+    alpha : float
+        Opacity in [0.0, 1.0]; 0 → white, 1 → full color.
+
+    Returns
+    -------
+    str
+        '#rrggbb' hex string of the blended result.
+    """
     alpha = max(0.0, min(1.0, alpha))
     s = hex_color.lstrip("#")
     r, g, b = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
@@ -47,6 +98,30 @@ def _blend_over_white(hex_color: str, alpha: float) -> str:
 
 
 class KawaiiPreviewDialog:
+    """Modal settings dialog with real-time kawaii decoration preview.
+
+    Displays a Tk Canvas that mirrors the decoration rendering from pdf_export.py —
+    background tint, border, daisy watermark, sparkle stars, corner daisies, and
+    cat faces — updated live as the user moves sliders.
+
+    Controls exposed:
+    - Printer B/W mode checkbox
+    - Preset selector (Cute / Elegant / etc.)
+    - BG Hue slider (0 = pink, 100 = purple)
+    - Element Intensity slider (0–300%)
+    - Reset to Defaults / Save / Close buttons
+    - "Generate Test PDF" button — exports a 10-item sample PDF and auto-opens it
+
+    Settings are persisted to kawaii_pdf_settings.json via kawaii_settings.save_settings()
+    on every slider change and on close, so the preview state and the live app state
+    are always in sync.
+
+    Parameters
+    ----------
+    parent : tk.Tk or tk.Toplevel
+        Owner window; dialog is modal (grab_set) relative to *parent*.
+    """
+
     def __init__(self, parent: tk.Tk | tk.Toplevel):
         self.win = tk.Toplevel(parent)
         self.win.title("Kawaii PDF Settings (Live Preview)")
@@ -71,6 +146,7 @@ class KawaiiPreviewDialog:
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self):
+        """Construct the two-panel layout: left=controls, right=canvas preview."""
         outer = ttk.Frame(self.win, padding=10)
         outer.pack(fill="both", expand=True)
 
@@ -122,6 +198,12 @@ class KawaiiPreviewDialog:
         ttk.Label(left, textvariable=self.readout, foreground="#444").pack(anchor="w", pady=(12, 0))
 
     def _to_settings(self) -> KawaiiSettings:
+        """Snapshot current control state into a clamped KawaiiSettings object.
+
+        stars_base and stars_max_extra are preserved from the last loaded settings because
+        there is no UI slider for those fields — they can only be changed by editing
+        kawaii_pdf_settings.json directly.
+        """
         s = KawaiiSettings(
             preset=str(self.preset_var.get()),
             printer_bw=bool(self.printer_bw.get()),
@@ -136,6 +218,11 @@ class KawaiiPreviewDialog:
         return s
 
     def _save_now(self):
+        """Persist current settings and refresh the canvas preview.
+
+        Called on every slider change and checkbox toggle. The _resetting guard prevents
+        recursive saves while _reset() is programmatically updating the control variables.
+        """
         if getattr(self, "_resetting", False):
             return
         s = self._to_settings()
@@ -144,6 +231,11 @@ class KawaiiPreviewDialog:
         self.redraw()
 
     def _reset(self):
+        """Reset all controls to factory defaults and persist the reset settings.
+
+        Sets _resetting=True while updating Tk variables so _save_now() no-ops on each
+        individual variable change; a single save is done after all variables are set.
+        """
         self._resetting = True
         s = reset_defaults()
         self.printer_bw.set(s.printer_bw)
@@ -155,6 +247,22 @@ class KawaiiPreviewDialog:
         self.redraw()
 
     def redraw(self):
+        """Repaint the full preview canvas from the current settings.
+
+        Rendering steps mirror pdf_export._draw_kawaii_background() as closely as possible
+        using Tk Canvas primitives instead of ReportLab canvas calls:
+          1. Solid background fill (tint blended over white via _blend_over_white)
+          2. Border rectangle
+          3. Large watermark daisy (center-right)
+          4. Random sparkle stars (count from profile stars_count)
+          5. Corner daisies (count from profile daisy_count, same pool-order as PDF)
+          6. Cat faces scattered in margin bands (count from profile cat_count)
+
+        Also updates the readout label with current effective alpha values and element counts.
+
+        Note: Tk Canvas doesn't support real alpha compositing, so line colors are blended
+        toward the background using _mix_hex() to approximate transparency.
+        """
         c = self.canvas
         c.delete("all")
 
@@ -163,13 +271,13 @@ class KawaiiPreviewDialog:
 
         prof = compute_effective_profile(self._to_settings())
 
-        tint_hex = _rgb01_to_hex(prof["tint_rgb"])
-        stroke_hex = _rgb01_to_hex(prof["stroke_rgb"])
+        tint_hex = _rgb01_to_hex(prof.get("tint_rgb", (0.95, 0.85, 0.90)))
+        stroke_hex = _rgb01_to_hex(prof.get("stroke_rgb", (0.55, 0.40, 0.50)))
 
-        tint_a = float(prof["tint_alpha"])
-        stroke_a = float(prof["stroke_alpha"])
-        sparkle_a = float(prof["sparkle_alpha"])
-        border_a = float(prof["border_alpha"])
+        tint_a = float(prof.get("tint_alpha", 0.055))
+        stroke_a = float(prof.get("stroke_alpha", 0.08))
+        sparkle_a = float(prof.get("sparkle_alpha", 0.07))
+        border_a = float(prof.get("border_alpha", 0.10))
 
         # background wash
         bg = _blend_over_white(tint_hex, tint_a)
@@ -246,7 +354,7 @@ class KawaiiPreviewDialog:
             cat_r = cat_rng.randint(int(min(w, h) * 0.018), int(min(w, h) * 0.038))
             self._cat_face(c, cx2, cy2, cat_r, line_col)
 
-        mode = "B/W" if prof["printer_bw"] else "Color"
+        mode = "B/W" if prof.get("printer_bw", False) else "Color"
         paw_count = int(prof.get("paw_count", 4))
         preset_name = prof.get("preset", "")
         bg_hue = prof.get("bg_hue_pct", 0)
@@ -260,6 +368,7 @@ class KawaiiPreviewDialog:
 
     @staticmethod
     def _star(c: tk.Canvas, x: int, y: int, r: int, color: str):
+        """Draw a 4-line sparkle star on the Tk Canvas at (x, y) with radius r."""
         c.create_line(x - r, y, x + r, y, fill=color, width=3)
         c.create_line(x, y - r, x, y + r, fill=color, width=3)
         c.create_line(x - int(r * 0.7), y - int(r * 0.7), x + int(r * 0.7), y + int(r * 0.7), fill=color, width=3)
@@ -267,6 +376,7 @@ class KawaiiPreviewDialog:
 
     @staticmethod
     def _daisy(c: tk.Canvas, x: int, y: int, r: int, color: str):
+        """Draw a 10-petal daisy on the Tk Canvas. Petal center offset is 1.7×r."""
         petals = 10
         petal_r = r
         petal_dist = int(r * 1.7)
@@ -280,6 +390,7 @@ class KawaiiPreviewDialog:
 
     @staticmethod
     def _cat_face(c: tk.Canvas, x: int, y: int, r: int, color: str):
+        """Draw a minimal Tk Canvas cat face: head circle, ear triangles, eyes, nose, whiskers."""
         # Head
         c.create_oval(x - r, y - r, x + r, y + r, outline=color, width=2)
         # Ears — two triangles
@@ -351,6 +462,7 @@ class KawaiiPreviewDialog:
             messagebox.showerror("Test PDF Error", str(e), parent=self.win)
 
     def _on_close(self):
+        """Save current settings, release the modal grab, and destroy the window."""
         # always save current state on close
         save_settings(self._to_settings())
         try:
@@ -361,6 +473,17 @@ class KawaiiPreviewDialog:
 
 
 def open_kawaii_settings_window(parent):
+    """Open the kawaii PDF settings dialog as a modal child of *parent*.
+
+    The dialog is grab-set (modal) so the user must close it before interacting
+    with the main window. Settings are auto-saved to kawaii_pdf_settings.json on
+    every change and again on close — there is no 'Cancel' that discards changes.
+
+    Parameters
+    ----------
+    parent : tk.Tk or tk.Toplevel
+        Owner window for the modal dialog.
+    """
     KawaiiPreviewDialog(parent)
 
 

@@ -1,4 +1,10 @@
-# mainSamples.py
+"""
+Sample inventory manager window.
+
+Toplevel window that loads a METRC export independently, identifies sample
+items, and provides tabbed views (by brand, by type, summary) with PDF
+export. Uses a standalone DataModel for file loading and column detection.
+"""
 # Sample Manager — identifies "sample" items (Wholesale Cost <= $0.01)
 # and provides filtering, summarizing, and exporting.
 #
@@ -10,6 +16,7 @@
 #   - Debounced search
 #   - Click-to-sort TableView
 
+import math
 import os
 import re
 import sys
@@ -21,12 +28,11 @@ from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 
 # PDF
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
+from pdf_common import build_section_pdf, PALETTE_KAWAII, PALETTE_PLAIN
 
-from data_core import load_raw_df, automap_columns, normalize_rooms, ellipses
+from data_core import load_raw_df, automap_columns, normalize_rooms, ellipses, truncate_text
+from themes import MOVEUP_THEME, apply_theme
 
 
 APP_TITLE = "Sample Manager"
@@ -56,35 +62,11 @@ COL_PATTERNS = {
                       r"packaged?\s*date", r"created?\s*date", r"date\s*packaged?"],
 }
 
-# -------- Theme --------
-MOVEUP_THEME = {
-    "bg": "#EEEAF8",
-    "label_fg": "#3A2869",
-    "tree_bg": "#F6F4FC",
-    "tree_sel": "#C3B1E8",
-    "btn_bg": "#EDEAF7",
-    "btn_bg_active": "#DED9F0",
-    "btn_fg": "#1F2328",
-    "btn_border": "#7251A8",
-}
-
 # ----------------------------
 # Truncation rules
 # ----------------------------
 TRUNCATE_PRODUCT_TO = 60
 TRUNCATE_METRC6_TO = 18
-
-# ----------------------------
-# Helpers
-# ----------------------------
-
-def truncate_text(val, max_len: int) -> str:
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return ""
-    s = str(val)
-    if len(s) <= max_len:
-        return s
-    return s[: max(0, max_len - 1)] + "\u2026"
 
 
 def open_file_with_default_app(path: str):
@@ -120,6 +102,7 @@ def metrc_last6(val) -> str:
 
 
 def first_matching_col(columns, patterns):
+    """Return the first column name matching any regex in *patterns*, or None."""
     cols = list(columns)
     for pat in patterns:
         rx = re.compile(pat, re.IGNORECASE)
@@ -133,6 +116,8 @@ def _fmt_currency(val) -> str:
     """Format a numeric value as '$X,XXX.XX'. Returns '' for non-numeric."""
     try:
         v = float(val)
+        if not math.isfinite(v):
+            return ""
         return f"${v:,.2f}"
     except (ValueError, TypeError):
         return ""
@@ -142,6 +127,18 @@ def _fmt_currency(val) -> str:
 # PDF Export
 # ----------------------------
 
+def _sample_total_row_style(columns, table_data):
+    """Extra TableStyle: bold + tinted background for TOTAL rows."""
+    cmds = []
+    if len(table_data) > 1:
+        last_row = table_data[-1]
+        if last_row and str(last_row[0]).upper().startswith("TOTAL"):
+            last_idx = len(table_data) - 1
+            cmds.append(("FONTNAME", (0, last_idx), (-1, last_idx), "Helvetica-Bold"))
+            cmds.append(("BACKGROUND", (0, last_idx), (-1, last_idx), colors.Color(0.92, 0.90, 0.96)))
+    return cmds
+
+
 def _sample_pdf_export(
     path: str,
     title: str,
@@ -149,113 +146,29 @@ def _sample_pdf_export(
     sections: list,
     kawaii_pdf: bool = False,
 ):
-    """
-    Export one or more tables to a single landscape PDF.
+    """Export one or more tables to a single landscape PDF via pdf_common."""
+    import pandas as _pd
 
-    sections: list of (section_title, df, columns) tuples.
-              section_title may be None for single-section exports.
-    """
-    doc = SimpleDocTemplate(
-        path,
-        pagesize=landscape(letter),
-        leftMargin=24,
-        rightMargin=24,
-        topMargin=24,
-        bottomMargin=24,
-        title=title,
-    )
-    styles = getSampleStyleSheet()
-    story = []
+    palette = PALETTE_KAWAII if kawaii_pdf else PALETTE_PLAIN
 
-    story.append(Paragraph(title, styles["Title"]))
-    story.append(Paragraph(subtitle, styles["Normal"]))
-    story.append(Spacer(1, 12))
-
-    if kawaii_pdf:
-        header_bg = colors.Color(0.96, 0.90, 0.95)
-        row_a = colors.Color(0.995, 0.965, 0.985)
-        row_b = colors.Color(0.98, 0.92, 0.96)
-        grid_color = colors.Color(0.72, 0.68, 0.74)
-    else:
-        header_bg = colors.lightgrey
-        row_a = colors.whitesmoke
-        row_b = colors.white
-        grid_color = colors.grey
-
+    # Convert (section_title, df, columns) → (section_title, columns, data_rows)
+    converted = []
     for section_title, df, columns in sections:
-        if section_title:
-            story.append(Spacer(1, 14))
-            story.append(Paragraph(section_title, styles["Heading2"]))
-            story.append(Spacer(1, 6))
-
         if df is None or df.empty:
-            story.append(Paragraph("No data.", styles["Normal"]))
-            continue
+            converted.append((section_title, list(columns), []))
+        else:
+            out = df[columns].copy()
+            for c in out.columns:
+                if _pd.api.types.is_datetime64_any_dtype(out[c]):
+                    out[c] = out[c].dt.strftime("%Y-%m-%d")
+            out = out.fillna("")
+            converted.append((section_title, list(columns), out.values.tolist()))
 
-        out = df[columns].copy()
-        for c in out.columns:
-            if pd.api.types.is_datetime64_any_dtype(out[c]):
-                out[c] = out[c].dt.strftime("%Y-%m-%d")
-        out = out.fillna("")
-        table_data = [list(columns)] + out.values.tolist()
-
-        total_width = 742
-        base = max(60, int(total_width / max(1, len(columns))))
-        col_widths = []
-        for c in columns:
-            name = str(c).lower()
-            if "product" in name:
-                col_widths.append(base * 3)
-            elif "brand" in name:
-                col_widths.append(int(base * 1.5))
-            elif "metrc" in name:
-                col_widths.append(int(base * 0.7))
-            elif "room" in name or "location" in name:
-                col_widths.append(int(base * 1.0))
-            else:
-                col_widths.append(base)
-
-        s = sum(col_widths)
-        if s > 0:
-            scale = total_width / s
-            col_widths = [max(50, int(w * scale)) for w in col_widths]
-
-        tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
-
-        base_style = [
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 9),
-            ("BACKGROUND", (0, 0), (-1, 0), header_bg),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-            ("FONTSIZE", (0, 1), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.25, grid_color),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [row_a, row_b]),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]
-
-        # Center qty-like columns
-        for i, c in enumerate(columns):
-            name = str(c).lower()
-            if "qty" in name or "count" in name or "quantity" in name:
-                base_style.append(("ALIGN", (i, 0), (i, -1), "CENTER"))
-            if "cost" in name or "price" in name or "value" in name or "retail" in name:
-                base_style.append(("ALIGN", (i, 0), (i, -1), "RIGHT"))
-
-        # Bold the last row if it's a TOTAL row
-        if len(table_data) > 1:
-            last_row = table_data[-1]
-            if last_row and str(last_row[0]).upper().startswith("TOTAL"):
-                last_idx = len(table_data) - 1
-                base_style.append(("FONTNAME", (0, last_idx), (-1, last_idx), "Helvetica-Bold"))
-                base_style.append(("BACKGROUND", (0, last_idx), (-1, last_idx), colors.Color(0.92, 0.90, 0.96)))
-
-        tbl.setStyle(TableStyle(base_style))
-        story.append(tbl)
-
-    doc.build(story)
+    build_section_pdf(
+        path, title, subtitle, converted,
+        palette=palette,
+        extra_style_fn=_sample_total_row_style,
+    )
 
 
 # ----------------------------
@@ -263,7 +176,21 @@ def _sample_pdf_export(
 # ----------------------------
 
 class SampleDataModel:
+    """
+    Data model for sample inventory: loads a METRC file, detects columns, filters sample items.
+
+    Standalone from main.py's data pipeline because SampleApp runs as an independent
+    Toplevel window with its own file import. Does not share state with MoveUpGUI.
+    """
+
     def __init__(self):
+        """
+        Initialise a blank SampleDataModel with no data loaded.
+
+        All ``col_*`` attributes start as ``None``.  Call ``load_file()`` to
+        populate them.  ``df_raw`` holds the full loaded DataFrame;
+        ``df_samples`` holds the last result of ``filter_samples()``.
+        """
         self.df_raw: pd.DataFrame | None = None
         self.df_samples: pd.DataFrame | None = None
 
@@ -402,125 +329,57 @@ class SampleDataModel:
         sample_df = self.df_raw[self._get_sample_mask(self.df_raw)]
         return sorted(sample_df[self.col_type].dropna().astype(str).unique().tolist())
 
-    def build_brand_summary(self) -> pd.DataFrame:
-        """Brand, Sample Count, Total Qty, Total Retail Value + TOTAL row."""
+    def _build_summary(self, label: str, group_col_attr: str,
+                        include_retail: bool = False) -> pd.DataFrame:
+        """Generic summary: group by a column, count samples, sum qty, optionally sum retail value."""
+        base_cols = [label, "Sample Count", "Total Qty"]
+        if include_retail:
+            base_cols.append("Total Retail Value")
+
         if self.df_samples is None or self.df_samples.empty:
-            return pd.DataFrame(columns=["Brand", "Sample Count", "Total Qty", "Total Retail Value"])
+            return pd.DataFrame(columns=base_cols)
 
         df = self.df_samples.copy()
-        brand_col = self.col_brand if (self.col_brand and self.col_brand in df.columns) else None
+        src_col = getattr(self, group_col_attr, None)
+        src_col = src_col if (src_col and src_col in df.columns) else None
         qty_col = self.col_qty if (self.col_qty and self.col_qty in df.columns) else None
-        price_col = self.col_unit_price if (self.col_unit_price and self.col_unit_price in df.columns) else None
 
-        if brand_col:
-            df["_brand"] = df[brand_col].astype(str).fillna("Unknown")
-        else:
-            df["_brand"] = "Unknown"
-
+        df["_grp"] = df[src_col].astype(str).fillna("Unknown") if src_col else "Unknown"
         df["_qty"] = pd.to_numeric(df[qty_col], errors="coerce").fillna(0) if qty_col else 0
-        df["_price"] = pd.to_numeric(df[price_col], errors="coerce").fillna(0.0) if price_col else 0.0
-        df["_retail_val"] = df["_qty"] * df["_price"]
 
-        grp = df.groupby("_brand", sort=True).agg(
-            sample_count=("_brand", "size"),
-            total_qty=("_qty", "sum"),
-            total_retail=("_retail_val", "sum"),
-        ).reset_index()
+        aggs = {"sample_count": ("_grp", "size"), "total_qty": ("_qty", "sum")}
+        if include_retail:
+            price_col = self.col_unit_price if (self.col_unit_price and self.col_unit_price in df.columns) else None
+            df["_price"] = pd.to_numeric(df[price_col], errors="coerce").fillna(0.0) if price_col else 0.0
+            df["_retail_val"] = df["_qty"] * df["_price"]
+            aggs["total_retail"] = ("_retail_val", "sum")
+
+        grp = df.groupby("_grp", sort=True).agg(**aggs).reset_index()
 
         rows = []
         for _, r in grp.iterrows():
-            rows.append({
-                "Brand": r["_brand"],
-                "Sample Count": int(r["sample_count"]),
-                "Total Qty": int(r["total_qty"]),
-                "Total Retail Value": _fmt_currency(r["total_retail"]),
-            })
+            row = {label: r["_grp"], "Sample Count": int(r["sample_count"]),
+                   "Total Qty": int(r["total_qty"])}
+            if include_retail:
+                row["Total Retail Value"] = _fmt_currency(r["total_retail"])
+            rows.append(row)
 
-        total_count = grp["sample_count"].sum()
-        total_qty = grp["total_qty"].sum()
-        total_retail = grp["total_retail"].sum()
-        rows.append({
-            "Brand": "TOTAL",
-            "Sample Count": int(total_count),
-            "Total Qty": int(total_qty),
-            "Total Retail Value": _fmt_currency(total_retail),
-        })
+        total_row = {label: "TOTAL", "Sample Count": int(grp["sample_count"].sum()),
+                     "Total Qty": int(grp["total_qty"].sum())}
+        if include_retail:
+            total_row["Total Retail Value"] = _fmt_currency(grp["total_retail"].sum())
+        rows.append(total_row)
 
         return pd.DataFrame(rows)
+
+    def build_brand_summary(self) -> pd.DataFrame:
+        return self._build_summary("Brand", "col_brand", include_retail=True)
 
     def build_type_summary(self) -> pd.DataFrame:
-        """Type, Sample Count, Total Qty + TOTAL row."""
-        if self.df_samples is None or self.df_samples.empty:
-            return pd.DataFrame(columns=["Type", "Sample Count", "Total Qty"])
-
-        df = self.df_samples.copy()
-        type_col = self.col_type if (self.col_type and self.col_type in df.columns) else None
-        qty_col = self.col_qty if (self.col_qty and self.col_qty in df.columns) else None
-
-        if type_col:
-            df["_type"] = df[type_col].astype(str).fillna("Unknown")
-        else:
-            df["_type"] = "Unknown"
-
-        df["_qty"] = pd.to_numeric(df[qty_col], errors="coerce").fillna(0) if qty_col else 0
-
-        grp = df.groupby("_type", sort=True).agg(
-            sample_count=("_type", "size"),
-            total_qty=("_qty", "sum"),
-        ).reset_index()
-
-        rows = []
-        for _, r in grp.iterrows():
-            rows.append({
-                "Type": r["_type"],
-                "Sample Count": int(r["sample_count"]),
-                "Total Qty": int(r["total_qty"]),
-            })
-
-        rows.append({
-            "Type": "TOTAL",
-            "Sample Count": int(grp["sample_count"].sum()),
-            "Total Qty": int(grp["total_qty"].sum()),
-        })
-
-        return pd.DataFrame(rows)
+        return self._build_summary("Type", "col_type")
 
     def build_room_summary(self) -> pd.DataFrame:
-        """Room, Sample Count, Total Qty + TOTAL row."""
-        if self.df_samples is None or self.df_samples.empty:
-            return pd.DataFrame(columns=["Room", "Sample Count", "Total Qty"])
-
-        df = self.df_samples.copy()
-        room_col = self.col_room if (self.col_room and self.col_room in df.columns) else None
-        qty_col = self.col_qty if (self.col_qty and self.col_qty in df.columns) else None
-
-        if room_col:
-            df["_room"] = df[room_col].astype(str).fillna("Unknown")
-        else:
-            df["_room"] = "Unknown"
-
-        df["_qty"] = pd.to_numeric(df[qty_col], errors="coerce").fillna(0) if qty_col else 0
-
-        grp = df.groupby("_room", sort=True).agg(
-            sample_count=("_room", "size"),
-            total_qty=("_qty", "sum"),
-        ).reset_index()
-
-        rows = []
-        for _, r in grp.iterrows():
-            rows.append({
-                "Room": r["_room"],
-                "Sample Count": int(r["sample_count"]),
-                "Total Qty": int(r["total_qty"]),
-            })
-
-        rows.append({
-            "Room": "TOTAL",
-            "Sample Count": int(grp["sample_count"].sum()),
-            "Total Qty": int(grp["total_qty"].sum()),
-        })
-
-        return pd.DataFrame(rows)
+        return self._build_summary("Room", "col_room")
 
     def build_action_list(self) -> pd.DataFrame:
         """Samples in Backstock only, sorted Room -> Type -> Brand -> Product."""
@@ -592,6 +451,8 @@ class SampleDataModel:
 # ----------------------------
 
 class TableView(ttk.Frame):
+    """Scrollable treeview widget with sortable columns and auto-width sizing."""
+
     def __init__(self, parent):
         super().__init__(parent)
         self.tree = ttk.Treeview(self, columns=(), show="headings", selectmode="extended")
@@ -768,6 +629,26 @@ class TableView(ttk.Frame):
 # ----------------------------
 
 class SampleApp(tk.Toplevel):
+    """
+    Sample inventory manager — Toplevel window for tracking sample items.
+
+    Loads a METRC file independently via ``SampleDataModel.load_file()`` and
+    identifies samples by Wholesale Cost ≤ ``SAMPLE_COST_THRESHOLD`` (0.01).
+
+    Four tabs:
+    - **Inventory**: full sample item list with room/type filters and live
+      search.  Supports adding rows to the Distribution List via double-click
+      or the context menu.
+    - **Summary Dashboard**: brand/type/room aggregates with sample counts,
+      total qty, and retail value.
+    - **Distribution List**: user-curated list of items to distribute, with
+      basket grouping and an "Action List" (backstock samples only) sub-tab.
+    - **Distributor Report**: per-distributor breakdown with brand lists.
+
+    PDF export uses ``pdf_common.build_section_pdf()`` with kawaii/plain
+    palette toggle.  CSV and Excel exports are also available.
+    """
+
     def __init__(self, master):
         super().__init__(master)
         self.title(APP_TITLE)
@@ -803,7 +684,7 @@ class SampleApp(tk.Toplevel):
         if self._debounce_job is not None:
             try:
                 self.after_cancel(self._debounce_job)
-            except Exception:
+            except (tk.TclError, ValueError):
                 pass
             self._debounce_job = None
         self.destroy()
@@ -821,61 +702,7 @@ class SampleApp(tk.Toplevel):
         return m
 
     def apply_subtle_theme(self):
-        style = ttk.Style()
-        try:
-            base = style.theme_use()
-            style.theme_use("clam")
-        except Exception:
-            base = style.theme_use()
-
-        t = MOVEUP_THEME
-
-        if "sample_mgr_theme" not in style.theme_names():
-            style.theme_create(
-                "sample_mgr_theme",
-                parent=base,
-                settings={
-                    "TFrame": {"configure": {"background": t["bg"]}},
-                    "TLabel": {"configure": {"background": t["bg"], "foreground": t["label_fg"]}},
-                    "TCheckbutton": {"configure": {"background": t["bg"], "foreground": t["label_fg"]}},
-                    "TNotebook": {"configure": {"background": t["bg"]}},
-                    "TNotebook.Tab": {
-                        "configure": {"background": t["bg"], "foreground": t["label_fg"], "padding": (12, 6)},
-                    },
-                    "TButton": {
-                        "configure": {
-                            "padding": 6,
-                            "relief": "solid",
-                            "borderwidth": 1,
-                            "background": t["btn_bg"],
-                            "foreground": t["btn_fg"],
-                        },
-                        "map": {
-                            "background": [("active", t["btn_bg_active"]), ("pressed", t["btn_bg_active"])],
-                            "foreground": [("active", t["btn_fg"]), ("pressed", t["btn_fg"])],
-                        },
-                    },
-                    "Treeview": {
-                        "configure": {
-                            "background": t["tree_bg"],
-                            "fieldbackground": t["tree_bg"],
-                            "foreground": "#333333",
-                            "rowheight": 24,
-                        },
-                        "map": {
-                            "background": [("selected", t["tree_sel"])],
-                            "foreground": [("selected", "#000000")],
-                        },
-                    },
-                    "Treeview.Heading": {
-                        "configure": {"background": t["bg"], "foreground": t["label_fg"]}
-                    },
-                    "TEntry": {"configure": {"fieldbackground": "white", "foreground": "#1F2328"}},
-                },
-            )
-
-        style.theme_use("sample_mgr_theme")
-        self.configure(background=t["bg"])
+        apply_theme(self, "sample_mgr_theme")
 
     def _build_ui(self):
         # ---------- Top bar ----------
@@ -1114,12 +941,23 @@ class SampleApp(tk.Toplevel):
         if path is None:
             path = filedialog.askopenfilename(
                 title="Select Inventory Export",
-                filetypes=[("Excel Files", "*.xlsx"), ("CSV Files", "*.csv"), ("All Files", "*.*")],
+                filetypes=[
+                    ("All Supported", "*.xlsx *.xls *.xlsm *.xlsb *.ods *.csv *.tsv *.txt *.tab"),
+                    ("Excel", "*.xlsx *.xls *.xlsm *.xlsb"),
+                    ("CSV / Text", "*.csv *.tsv *.txt *.tab"),
+                    ("OpenDocument", "*.ods"),
+                    ("All Files", "*.*"),
+                ],
                 initialdir=self._last_dir,
             )
         if not path:
             return
         self._last_dir = os.path.dirname(path)
+        # Clear the distribution basket — items from the previous file are stale
+        self._dist_basket.clear()
+        self._dist_basket_keys.clear()
+        self._update_distribution_count()
+        self._refresh_distribution_list()
         try:
             self.model.load_file(path)
             self.title(f"{APP_TITLE} \u2014 {os.path.basename(path)}")
@@ -1242,6 +1080,7 @@ class SampleApp(tk.Toplevel):
         """Add currently highlighted Tab 1 row(s) to the persistent basket."""
         rows_df = self.inv_table.get_selected_df(self.inv_cols if self.inv_cols else None)
         if rows_df.empty:
+            self.selection_count_var.set("⬆ select a row first, then click Add")
             return
         added = 0
         for _, row in rows_df.iterrows():

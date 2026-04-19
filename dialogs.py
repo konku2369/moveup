@@ -2,7 +2,38 @@
 Dialog windows and filter utilities for MoveUp.
 
 Each dialog is a standalone function that creates a Toplevel window and
-communicates back to the caller via explicit callbacks.
+communicates back to the caller via explicit callbacks. This keeps the
+main.py clean — dialog logic lives here, not in MoveUpGUI.
+
+DIALOG FUNCTIONS:
+=================
+  open_map_columns_dialog()  — Manual column mapping override. Shown when
+                                automap_columns() fails or the user wants
+                                to remap columns manually.
+
+  open_filters_window()      — Room/brand/type filter selection with room
+                                alias management. This is how users control
+                                which items appear in the Move-Up list.
+
+  open_audit_window()        — Audit PDF export with distributor grouping,
+                                sort mode selection, and Accessory Audit
+                                one-click button.
+
+  open_manual_add_dialog()   — Search inventory and manually add items to
+                                the Priority! list (for items that aren't
+                                in the move-up candidates but need stickers).
+
+HELPER CLASSES:
+  _FilterList                — Searchable multi-select Listbox with Select All /
+                                Clear buttons. Used in the filters dialog for
+                                rooms, brands, and types.
+
+HELPER FUNCTIONS:
+  get_all_rooms_normalized() — Unique room names after alias normalization
+  get_all_brands()           — Unique brand names from the DataFrame
+  get_all_types()            — Unique product type names from the DataFrame
+  default_candidate_rooms()  — Smart default room selection (Backstock + Incoming,
+                                or all non-floor rooms if those don't exist)
 """
 
 import os
@@ -25,7 +56,8 @@ from data_core import (
     normalize_rooms,
     detect_metrc_source_column,
 )
-from pdf_export import export_audit_pdfs
+# pdf_export is lazy-imported inside export_audit_pdfs usage to avoid
+# startup crash if reportlab is missing
 
 
 # ---------------------------------------------------------------------------
@@ -33,10 +65,38 @@ from pdf_export import export_audit_pdfs
 # ---------------------------------------------------------------------------
 
 class _FilterList:
+    """
+    Searchable multi-select Listbox with Select All / Clear buttons.
+
+    Used in the Filters dialog for the Rooms, Brands, and Types panels.
+    Supports multi-token AND search: typing ``"flower blue"`` shows only items
+    whose name contains *both* ``"flower"`` and ``"blue"``.
+
+    Selection is preserved across search refreshes — if an item is selected and
+    then temporarily hidden by a search term, it remains selected when the
+    search is cleared.  This is critical so that brand/type selections don't
+    get silently dropped when the user searches, then applies filters.
+
+    Internal state:
+    - ``all_items``: the full (unfiltered) list of option strings.
+    - ``filtered_idx``: list mapping current listbox positions to indices in
+      ``all_items``, updated by every ``refresh()`` call.
+    """
+
     def __init__(self, parent, title: str):
+        """
+        Build the filter list widget inside *parent*.
+
+        Parameters
+        ----------
+        parent : tk.Widget
+            Parent container (packed inside ``open_filters_window``).
+        title : str
+            Label text shown as the LabelFrame title.
+        """
         self.title = title
-        self.all_items: List[str] = []
-        self.filtered_idx: List[int] = []
+        self.all_items: List[str] = []    # full list of options (unfiltered)
+        self.filtered_idx: List[int] = [] # maps listbox position → index in all_items
 
         frm = ttk.Labelframe(parent, text=title, padding=8)
         frm.pack(side="left", fill="both", expand=True, padx=6, pady=6)
@@ -64,10 +124,12 @@ class _FilterList:
         self.search_var.trace_add("write", lambda *_: self.refresh())
 
     def set_items(self, items: List[str]):
+        """Replace the full option list and refresh the visible listbox."""
         self.all_items = list(items or [])
         self.refresh()
 
     def refresh(self):
+        """Rebuild the visible listbox from search query, preserving selections."""
         q = (self.search_var.get() or "").strip().lower()
         selected_vals = set(self.get_selected_values())
         self.lb.delete(0, END)
@@ -75,6 +137,7 @@ class _FilterList:
         if not q:
             self.filtered_idx = list(range(len(self.all_items)))
         else:
+            # Multi-token AND search: "flower blue" matches items containing BOTH words
             tokens = q.split()
 
             def match(i: int) -> bool:
@@ -86,17 +149,32 @@ class _FilterList:
         for i in self.filtered_idx:
             self.lb.insert(END, self.all_items[i])
 
+        # Re-select previously selected items that survived the filter
         for pos, i in enumerate(self.filtered_idx):
             if self.all_items[i] in selected_vals:
                 self.lb.selection_set(pos)
 
     def select_all(self):
+        """Select every visible item in the listbox."""
         self.lb.selection_set(0, END)
 
     def clear_selection(self):
+        """Deselect every item in the listbox."""
         self.lb.selection_clear(0, END)
 
     def set_selected_values(self, values: List[str]):
+        """
+        Programmatically select items by value string.
+
+        Clears the search bar (so all items are visible), then selects each
+        item in *values* by matching against ``all_items``.  Items in *values*
+        that are not in ``all_items`` are silently ignored.
+
+        Parameters
+        ----------
+        values : list[str]
+            Item strings to select.  ``None`` or empty → clear all selections.
+        """
         values_set = set(values or [])
         self.lb.selection_clear(0, END)
         self.search_var.set("")
@@ -106,11 +184,13 @@ class _FilterList:
                 self.lb.selection_set(pos)
 
     def get_selected_values(self) -> List[str]:
+        """Return the actual item strings for all selected listbox positions."""
         sel = list(self.lb.curselection())
         out = []
         for pos in sel:
             if pos < 0 or pos >= len(self.filtered_idx):
                 continue
+            # Convert listbox position → original all_items index → item string
             i = self.filtered_idx[pos]
             out.append(self.all_items[i])
         return out
@@ -123,6 +203,27 @@ class _FilterList:
 def get_all_rooms_normalized(
     df: pd.DataFrame, room_alias_map: Dict[str, str]
 ) -> List[str]:
+    """
+    Return sorted unique room names after applying the user's alias map.
+
+    Passes *df* through ``normalize_rooms()`` (which substitutes room names per
+    *room_alias_map*) before collecting unique values, so the returned list
+    reflects canonical names (e.g. ``"Vault"`` instead of ``"Vault 1"`` /
+    ``"Vault 2"``).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with a ``"Room"`` column.
+    room_alias_map : dict[str, str]
+        Maps raw room names (lowercase) to canonical names.
+
+    Returns
+    -------
+    list[str]
+        Sorted unique room strings.  Empty list if *df* has no ``"Room"``
+        column or is empty.
+    """
     if df is None or df.empty or "Room" not in df.columns:
         return []
     df_norm = normalize_rooms(df, room_alias_map)
@@ -132,6 +233,12 @@ def get_all_rooms_normalized(
 
 
 def get_all_brands(df: pd.DataFrame) -> List[str]:
+    """
+    Return sorted unique brand names from the ``"Brand"`` column of *df*.
+
+    Strips whitespace and filters out blank/null values.  Returns ``[]`` if
+    *df* is None, empty, or lacks a ``"Brand"`` column.
+    """
     if df is None or df.empty or "Brand" not in df.columns:
         return []
     vals = sorted(
@@ -141,6 +248,12 @@ def get_all_brands(df: pd.DataFrame) -> List[str]:
 
 
 def get_all_types(df: pd.DataFrame) -> List[str]:
+    """
+    Return sorted unique product type names from the ``"Type"`` column of *df*.
+
+    Strips whitespace and filters out blank/null values.  Returns ``[]`` if
+    *df* is None, empty, or lacks a ``"Type"`` column.
+    """
     if df is None or df.empty or "Type" not in df.columns:
         return []
     vals = sorted(
@@ -152,6 +265,31 @@ def get_all_types(df: pd.DataFrame) -> List[str]:
 def default_candidate_rooms(
     df: pd.DataFrame, room_alias_map: Dict[str, str]
 ) -> List[str]:
+    """
+    Determine sensible default candidate rooms for the move-up filter.
+
+    Two-path logic:
+    1. **Preferred**: if *both* ``"Incoming Deliveries"`` and ``"Backstock"``
+       appear in the alias-normalised room list, return exactly those two.
+       This covers the typical METRC store layout.
+    2. **Fallback**: return all rooms that are *not* in ``SALES_FLOOR_ALIASES``
+       and not literally ``"sales floor"`` (case-insensitive).  This handles
+       stores with non-standard room names.  If the fallback produces an empty
+       list (everything was a sales-floor alias), all rooms are returned.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with a ``"Room"`` column.
+    room_alias_map : dict[str, str]
+        User-defined room alias map (forwarded to ``get_all_rooms_normalized``).
+
+    Returns
+    -------
+    list[str]
+        Sorted list of room name strings to use as default candidates.  Empty
+        if *df* has no room data.
+    """
     rooms = get_all_rooms_normalized(df, room_alias_map)
     if not rooms:
         return []
@@ -179,18 +317,45 @@ def open_map_columns_dialog(
     force: bool = False,
 ) -> None:
     """
-    Column-mapping dialog.
+    Open the manual column mapping dialog.
 
-    *on_apply(mapped_df, mapping_dict)* is called when the user clicks Apply.
+    Shown when ``automap_columns()`` fails (e.g. non-standard column names) or
+    when the user manually opens the column mapping from the toolbar.  Allows
+    the user to select which source column maps to each required field in
+    ``COLUMNS_TO_USE`` (Type, Brand, Product Name, Package Barcode, Room,
+    Qty On Hand) plus the METRC source column.
+
+    Auto-detection runs first: ``automap_columns()`` pre-fills the dropdowns
+    with its best guesses.  If it raises an exception, a red error label is
+    shown in the dialog explaining why auto-detection failed, and the dropdowns
+    default to empty so the user must select manually.
+
+    When the user clicks Apply, the dialog validates that all required fields
+    are mapped, performs the column rename, and calls
+    *on_apply(mapped_df, mapping_dict)* with the remapped DataFrame and the
+    ``{source_col: target_col}`` dict.
+
+    Parameters
+    ----------
+    parent : tk.Widget
+        Parent window for the Toplevel.
+    raw_df : pd.DataFrame
+        The raw loaded DataFrame (before any column renaming).
+    on_apply : Callable[[pd.DataFrame, dict], None]
+        Callback invoked with the mapped DataFrame and rename dict on Apply.
+    force : bool
+        Unused parameter kept for API compatibility.
     """
     src_cols = list(raw_df.columns)
     metrc_src_detected = detect_metrc_source_column(raw_df)
 
     auto_map = {}
+    _automap_error = ""
     try:
         _auto_df, auto_map = automap_columns(raw_df)
-    except Exception:
+    except Exception as e:
         auto_map = {}
+        _automap_error = str(e)
 
     win = Toplevel(parent)
     win.title("Map Columns (Manual Override)")
@@ -198,6 +363,13 @@ def open_map_columns_dialog(
     ttk.Label(
         win, text="Choose which source column maps to each required field."
     ).pack(anchor="w", padx=10, pady=10)
+    if _automap_error:
+        ttk.Label(
+            win,
+            text=f"Auto-detection failed — please map columns manually.\n({_automap_error[:140]})",
+            foreground="#aa0000",
+            wraplength=720,
+        ).pack(anchor="w", padx=10, pady=(0, 8))
 
     frame = ttk.Frame(win)
     frame.pack(fill="both", expand=True, padx=10)
@@ -459,6 +631,15 @@ def open_filters_window(
         if not f or not t:
             messagebox.showinfo("Alias", "Enter both From and To.")
             return
+        if f.casefold() == t.casefold():
+            messagebox.showinfo("Alias", "From and To cannot be the same room.")
+            return
+        if t in room_alias_map:
+            messagebox.showwarning(
+                "Alias",
+                f'"{t}" is already aliased to "{room_alias_map[t]}". '
+                f"This may cause unexpected results.",
+            )
         room_alias_map[f] = t
         alias_from.set("")
         alias_to.set("")
@@ -552,8 +733,41 @@ def open_audit_window(
     on_error: Optional[Callable[[str], None]] = None,
 ) -> None:
     """
-    Audit PDF export dialog with distributor grouping and Accessory Audit
-    one-click button.
+    Open the Audit PDF export dialog.
+
+    Provides controls for generating two audit PDFs:
+    - **Master audit**: full inventory with quantities — for reconciliation.
+    - **Blank audit**: same layout with an empty qty column — for physical
+      counting rounds.
+
+    Export options:
+    - **Group by**: Distributor, Brand, or Type (each group gets a page break).
+    - **Sort by**: Distributor → Brand → Product, or Type → Brand → Product.
+    - **Include optional fields**: Expiration Date, Received Date, Wholesale Cost,
+      Room (configurable checkboxes).
+    - **Accessory Audit**: one-click button that generates a separate accessory-only
+      PDF (items whose Type contains ``"Accessory"``).
+
+    Parameters
+    ----------
+    parent : tk.Widget
+        Parent window.
+    current_df : pd.DataFrame
+        The full mapped inventory DataFrame.
+    room_alias_map : dict[str, str]
+        Used to normalise room names before grouping.
+    export_run_dir : str
+        Output directory for the generated PDFs.
+    printer_bw : bool
+        If ``True``, use the B/W palette; otherwise use the kawaii palette.
+    auto_open : bool
+        If ``True``, open the PDF in the system default viewer after export.
+    on_status : Callable[[str], None]
+        Status bar update callback.
+    on_success : Callable[[str], None] | None
+        Optional callback invoked with the output path on successful export.
+    on_error : Callable[[str], None] | None
+        Optional callback invoked with the error message on export failure.
     """
     df = current_df.copy()
     has_dist = "Distributor" in df.columns
@@ -797,6 +1011,7 @@ def open_audit_window(
             return
 
         try:
+            from pdf_export import export_audit_pdfs
             master_path, blank_path = export_audit_pdfs(
                 df=use,
                 base_dir=export_run_dir,
@@ -845,10 +1060,33 @@ def open_manual_add_dialog(
     on_apply: Callable[[set], None],
 ) -> None:
     """
-    Search inventory and manually add items to Priority!
+    Open the "Manual Add" dialog to add items directly to the Priority list.
 
-    *on_apply(added_barcodes)* is called with the set of newly-added barcode
-    strings (those that were not already in *kuntal_priority_barcodes*).
+    Displays the full inventory in a searchable treeview.  The user can type
+    in the search bar to filter rows, then select one or more items and click
+    "Add Selected to Priority!".
+
+    Only items whose barcode is *not* already in *kuntal_priority_barcodes* are
+    added; existing priority items are silently skipped.  The callback receives
+    only the newly added barcodes so the caller can trigger a single recompute
+    after the dialog closes.
+
+    Useful for adding items to the sticker sheet that are on the sales floor
+    (already restocked) but still need a label printed.
+
+    Parameters
+    ----------
+    parent : tk.Widget
+        Parent window for the Toplevel.
+    current_df : pd.DataFrame
+        The full mapped inventory DataFrame.  All of ``COLUMNS_TO_USE`` must
+        be present; a messagebox error is shown and the dialog aborts if any
+        are missing.
+    kuntal_priority_barcodes : set
+        Current set of priority barcode strings (used to skip duplicates).
+    on_apply : Callable[[set], None]
+        Called with the set of newly added barcode strings when the user
+        clicks "Add Selected to Priority!".
     """
     df = current_df.copy()
     missing = [c for c in COLUMNS_TO_USE if c not in df.columns]

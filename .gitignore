@@ -26,3 +26,5 @@ dist/
 generated/
 moveup_config.json
 kawaii_pdf_settings.json
+velocity_history.json
+import_history.json

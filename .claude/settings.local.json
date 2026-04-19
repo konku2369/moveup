@@ -48,7 +48,20 @@
       "Bash(for file in dialogs.py tree_ops.py config_manager.py data_core.py pdf_export.py kawaii_settings.py kawaii_preview.py bisa.py mainExpiring.py)",
       "Bash(do python -c \"import ast; ast.parse\\(open\\(r''$file''\\).read\\(\\)\\); print\\(''$file: OK''\\)\")",
       "Bash(echo \"$file: SYNTAX ERROR\")",
-      "Bash(ls -lh *.spec bisa_save.json)"
+      "Bash(ls -lh *.spec bisa_save.json)",
+      "Bash(grep -n \"class TableView\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(grep -rn \"TODO\\\\|FIXME\\\\|HACK\\\\|XXX\\\\|BUG\\\\|TEMP\\\\|NOCOMMIT\" --include=*.py .)",
+      "Bash(ls \"Bisa Inv Utility\"*.spec)",
+      "Bash(ls *.spec)",
+      "Bash(find \"C:\\\\Users\\\\kubic\\\\PycharmProjects\\\\moveup\" -name \"*.py\" -type f -exec wc -l {} +)",
+      "Bash(grep -n \"def _draw_daisy\\\\|def _draw_paw\\\\|def _draw_cat_face\\\\|def _draw_star\" C:UserskubicPycharmProjectsmoveup/*.py)",
+      "Bash(fi)",
+      "Bash(grep -n \"\\\\.tag_configure\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(grep -n \"TableStyle\\\\|setStyle\\\\|table_data = \" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(grep -n \"def.*theme\\\\|apply.*theme\\\\|THEME.*=\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
+      "Bash(grep -rh \"^import \\\\|^from \" *.py)",
+      "Bash(pip list:*)",
+      "Bash(pip install:*)"
     ]
   }
 }

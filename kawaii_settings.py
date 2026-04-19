@@ -1,8 +1,29 @@
-# kawaii_settings.py
-# Shared Kawaii PDF background settings (single source of truth)
-# - Presets editable at top
-# - Persists to kawaii_pdf_settings.json
-# - Provides effective profile for pdf_export.py (tint + stroke + border + sparkles)
+"""
+Kawaii PDF decoration settings.
+
+Manages KawaiiSettings dataclass, preset system, color math (pink-to-purple
+hue interpolation), and persistence to kawaii_pdf_settings.json.
+compute_effective_profile() converts user-facing slider values into the
+exact alpha/count/color values consumed by pdf_export.py decorations.
+
+HOW THE KAWAII SYSTEM WORKS:
+============================
+1. USER SETTINGS: KawaiiSettings dataclass holds slider values:
+   - preset: "Minimal", "Cute", or "Extra" (base intensity level)
+   - bg_hue_pct: 0-100 slider (0=pink, 100=lavender/purple)
+   - elem_intensity: 0-100 slider (controls how many daisies/paws/cats)
+   - printer_bw: True for B/W printers (disables color tint)
+
+2. PRESETS: Define base alpha values for tint, stroke, sparkle, border.
+   "Minimal" = barely visible decorations, "Extra" = maximum kawaii.
+
+3. compute_effective_profile(): Takes settings → produces a profile dict
+   with exact RGB colors, alpha values, element counts, and jitter seed.
+   This dict is consumed directly by pdf_export.py's drawing functions.
+
+4. PERSISTENCE: Saved to kawaii_pdf_settings.json. Loaded on startup.
+   Preview dialog (kawaii_preview.py) lets users see changes live.
+"""
 
 from __future__ import annotations
 
@@ -52,6 +73,43 @@ PURPLE_STROKE_RGB = (0.44, 0.36, 0.62) # purple-ish outline
 
 @dataclass
 class KawaiiSettings:
+    """
+    User-facing kawaii PDF decoration settings.
+
+    All sliders are stored as integer percentages so they can be serialised
+    cleanly to JSON and bound directly to Tk ``IntVar`` widgets in the preview
+    dialog.  ``compute_effective_profile()`` converts these percent values into
+    the exact float alpha/RGB/count values consumed by ``pdf_export.py``.
+
+    Attributes
+    ----------
+    preset : str
+        Decoration intensity tier: ``"Minimal"``, ``"Cute"``, or ``"Extra"``.
+        Selects the base alpha values from ``PRESETS_COLOR`` or ``PRESETS_BW``
+        before the intensity sliders multiply them.
+    printer_bw : bool
+        When ``True``, switch to greyscale-safe ``PRESETS_BW`` alphas and use
+        neutral grey RGB values instead of pink/purple tints.
+    bg_hue_pct : int
+        Background tint hue slider, 0–100.  0 = warm pink
+        (``PINK_TINT_RGB``), 100 = soft lavender purple (``PURPLE_TINT_RGB``).
+        Linearly interpolated in ``compute_effective_profile()``.
+    bg_intensity_pct : int
+        Background tint opacity slider, 0–300.  Multiplied against the preset's
+        ``tint_alpha`` base value.  Only affects background fill color, not
+        element strokes.
+    elem_intensity_pct : int
+        Element intensity slider, 0–300.  Multiplied against ``stroke_alpha``,
+        ``sparkle_alpha``, and ``border_alpha`` from the preset; also controls
+        star/daisy/paw/cat counts.
+    stars_base : int
+        Minimum star count when ``elem_intensity_pct`` is 0.
+    stars_max_extra : int
+        Additional stars added at 200% intensity.  At 100% half this value is
+        added; the final count is ``stars_base + round(t_el * stars_max_extra)``
+        where ``t_el = elem_intensity_pct / 200`` (clamped 0–1).
+    """
+
     preset: str = "Cute"
     printer_bw: bool = False
 
@@ -65,6 +123,18 @@ class KawaiiSettings:
     stars_max_extra: int = 140     # added at 200% intensity
 
     def clamp_self(self) -> None:
+        """
+        Coerce all fields to their valid ranges in place.
+
+        Called before save and before ``compute_effective_profile()`` so that
+        hand-edited JSON or out-of-range slider values are silently corrected
+        rather than causing downstream exceptions:
+
+        - ``preset`` → reset to ``"Cute"`` if not in ``PRESETS_COLOR``.
+        - ``bg_hue_pct`` → clamped to [0, 100].
+        - ``bg_intensity_pct`` / ``elem_intensity_pct`` → clamped to [0, 300].
+        - ``stars_base`` / ``stars_max_extra`` → clamped to ≥ 0.
+        """
         if self.preset not in PRESETS_COLOR:
             self.preset = "Cute"
         self.bg_hue_pct = max(0, min(100, int(self.bg_hue_pct)))
@@ -88,6 +158,22 @@ def config_path() -> str:
 
 
 def load_settings() -> KawaiiSettings:
+    """
+    Load kawaii PDF settings from ``kawaii_pdf_settings.json``.
+
+    If the file does not exist, a default ``KawaiiSettings()`` instance is
+    returned silently.  Any ``Exception`` during read or parse is caught and
+    printed; defaults are returned rather than propagating the error.
+
+    All loaded values are coerced to their correct types (``str``, ``bool``,
+    ``int``) and ``clamp_self()`` is called before returning so that stale or
+    hand-edited files cannot produce out-of-range settings.
+
+    Returns
+    -------
+    KawaiiSettings
+        Populated from disk, or default values if the file is absent or invalid.
+    """
     path = config_path()
     s = KawaiiSettings()
     if not os.path.exists(path):
@@ -110,6 +196,22 @@ def load_settings() -> KawaiiSettings:
 
 
 def save_settings(s: KawaiiSettings) -> None:
+    """
+    Persist kawaii PDF settings to ``kawaii_pdf_settings.json``.
+
+    Calls ``s.clamp_self()`` before writing so out-of-range in-memory values
+    are corrected prior to serialisation.  Uses the atomic write pattern
+    (``.tmp`` → ``os.replace()``) to prevent file corruption on crash.
+
+    Any ``Exception`` during write is caught and printed; the in-memory
+    settings object is not modified (aside from the clamp call).
+
+    Parameters
+    ----------
+    s : KawaiiSettings
+        Settings to persist.  Fields are coerced to their expected Python
+        types (``int``, ``bool``, ``str``) before being written to JSON.
+    """
     s.clamp_self()
     cfg = {
         "preset": s.preset,
@@ -131,24 +233,78 @@ def save_settings(s: KawaiiSettings) -> None:
 
 
 def reset_defaults() -> KawaiiSettings:
+    """Return a new ``KawaiiSettings`` instance with all default values."""
     return KawaiiSettings()
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
+    """Clamp *v* to the range [*lo*, *hi*]."""
     return max(lo, min(hi, v))
 
 
-def _mix_rgb(a: Tuple[float, float, float], b: Tuple[float, float, float], t: float) -> Tuple[float, float, float]:
+def _mix_rgb(
+    a: Tuple[float, float, float],
+    b: Tuple[float, float, float],
+    t: float,
+) -> Tuple[float, float, float]:
+    """
+    Linear interpolation between two RGB tuples.
+
+    Parameters
+    ----------
+    a, b : tuple[float, float, float]
+        Source and destination RGB colors with components in [0, 1].
+    t : float
+        Blend factor: 0.0 returns *a*, 1.0 returns *b*, clamped to [0, 1].
+
+    Returns
+    -------
+    tuple[float, float, float]
+        Interpolated RGB color.
+    """
     t = _clamp(t, 0.0, 1.0)
     return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
 
 
 def compute_effective_profile(s: KawaiiSettings) -> Dict[str, object]:
     """
-    Returns a dict consumable by pdf_export.py:
-      - tint_alpha, stroke_alpha, sparkle_alpha, border_alpha
-      - tint_rgb (0..1), stroke_rgb (0..1)
-      - stars_count
+    Convert a ``KawaiiSettings`` instance into a concrete decoration profile dict.
+
+    This is the central computation that bridges user-facing sliders and the
+    per-element drawing parameters in ``pdf_export.py``.  The output dict is
+    passed directly to decoration functions like ``_draw_kawaii_background()``.
+
+    Computation steps:
+    1. **Clamp** all settings via ``s.clamp_self()``.
+    2. **Pick base alphas** from ``PRESETS_BW`` (if ``printer_bw``) or
+       ``PRESETS_COLOR``, keyed by ``s.preset``.
+    3. **Apply sliders**: multiply ``tint_alpha`` by ``bg_intensity_pct / 100``;
+       multiply ``stroke_alpha``, ``sparkle_alpha``, ``border_alpha`` by
+       ``elem_intensity_pct / 100``.  Each result is clamped to ``LIMITS``.
+    4. **Interpolate hue**: blend ``PINK_TINT_RGB`` → ``PURPLE_TINT_RGB`` and
+       ``PINK_STROKE_RGB`` → ``PURPLE_STROKE_RGB`` using ``t = bg_hue_pct / 100``.
+       B/W mode uses neutral grey values instead.
+    5. **Compute element counts**:
+       - ``t_el = clamp(elem_intensity_pct, 0, 200) / 200``  (normalised 0–1)
+       - stars:  ``stars_base + round(t_el × stars_max_extra)``
+       - daisies: ``round(3 + t_el × 12)``  → 3 at 0%, 15 at 200%
+       - paws:    ``round(2 + t_el × 8)``   → 2 at 0%, 10 at 200%
+       - cats:    same formula as stars
+
+    Parameters
+    ----------
+    s : KawaiiSettings
+        User settings.  Modified in place by ``clamp_self()`` before use.
+
+    Returns
+    -------
+    dict
+        Keys: ``tint_alpha``, ``stroke_alpha``, ``sparkle_alpha``,
+        ``border_alpha`` (floats), ``tint_rgb``, ``stroke_rgb``
+        (3-tuples of floats in [0, 1]), ``stars_count``, ``daisy_count``,
+        ``paw_count``, ``cat_count`` (ints), plus echo-back of the input
+        slider values (``preset``, ``bg_hue_pct``, ``bg_intensity_pct``,
+        ``elem_intensity_pct``, ``printer_bw``).
     """
     s.clamp_self()
 
@@ -162,20 +318,23 @@ def compute_effective_profile(s: KawaiiSettings) -> Dict[str, object]:
     sparkle_alpha = _clamp(base["sparkle_alpha"] * el_mult, *LIMITS["sparkle_alpha"])
     border_alpha = _clamp(base["border_alpha"] * el_mult, *LIMITS["border_alpha"])
 
-    # hue: 0..1
+    # Hue interpolation: t=0 → pink, t=1 → lavender purple.
+    # bg_hue_pct slider (0-100) controls the tint color of the PDF background.
     t = float(s.bg_hue_pct) / 100.0
 
     if s.printer_bw:
+        # B/W mode uses neutral greys instead of pink/purple
         tint_rgb = (0.95, 0.95, 0.97)
         stroke_rgb = (0.45, 0.45, 0.48)
     else:
+        # Linearly interpolate between hand-tuned pink and purple RGB values
         tint_rgb = _mix_rgb(PINK_TINT_RGB, PURPLE_TINT_RGB, t)
         stroke_rgb = _mix_rgb(PINK_STROKE_RGB, PURPLE_STROKE_RGB, t)
 
-    # All element counts scale linearly with elem_intensity (0–200%).
-    # At 100%: stars=base+half_extra, daisies=9, paws=6.
+    # Element counts (stars, daisies, paws, cats) scale linearly with intensity.
+    # 0% → minimal decorations, 100% → normal cute, 200% → maximum feral.
     el_pct = _clamp(float(s.elem_intensity_pct), 0.0, 200.0)
-    t_el = el_pct / 200.0
+    t_el = el_pct / 200.0  # normalize to 0..1 range
 
     extra = int(round(t_el * float(s.stars_max_extra)))
     stars_count = int(max(0, s.stars_base + extra))

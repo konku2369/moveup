@@ -1,3 +1,40 @@
+"""
+Main GUI for Bisa Inventory Utility.
+
+Provides the MoveUpGUI class — the primary application window with treeviews
+for move-up candidates, priority items, excluded items, and full inventory.
+Handles file import, column mapping, move-up computation, PDF/Excel export,
+and velocity tracking integration.
+
+ARCHITECTURE OVERVIEW:
+=====================
+MoveUpGUI is the central hub. It creates a single Tk window with:
+  - A toolbar (import, export, filters, settings buttons)
+  - A ttk.Notebook with 4 tabs:
+    * Move-Up: items that need to go to the Sales Floor
+    * Priority!: user-starred items (shown first in PDF, marked with dog emoji)
+    * Excluded: items the user chose to hide from the Move-Up list
+    * All Items: full inventory with live search
+
+DATA FLOW:
+  1. User clicks Import → load_raw_df() → automap_columns() → self.current_df
+  2. _recompute_from_current() runs the pipeline:
+     current_df → compute_moveup_from_df() → aggregate_split → render trees
+  3. Export buttons generate PDFs/Excel from moveup_df + priority_df
+
+STATE:
+  - self.current_df: the full mapped inventory (all rooms, all items)
+  - self.moveup_df: the filtered move-up candidates (output of the pipeline)
+  - self.excluded_barcodes: set of barcodes the user removed from view
+  - self.kuntal_priority_barcodes: set of barcodes the user starred
+  - ConfigManager handles persistence of all settings to moveup_config.json
+
+SATELLITE WINDOWS (opened from the menu):
+  - mainExpiring.py: expiring items analysis
+  - mainSamples.py: sample inventory manager
+  - mainVelocity.py: velocity tracker (movement patterns across imports)
+"""
+
 import os
 import sys
 import subprocess
@@ -13,14 +50,16 @@ from tkinter import (
 )
 import tkinter as tk
 
-# PDF exports live in pdf_export.py
-from pdf_export import export_moveup_pdf_paginated
+# PDF exports live in pdf_export.py (lazy-imported in do_export_pdf to avoid
+# startup crash if reportlab is missing or pdf_export.py has an error)
 
 # Bisa (ASCII cat companion)
 from bisa import AsciiDogWidget
 
 # Config persistence
 from config_manager import ConfigManager
+from velocity_history import VelocityHistoryManager
+from import_history import ImportHistoryManager
 
 # Core logic
 from data_core import (
@@ -35,6 +74,8 @@ from data_core import (
     sort_with_backstock_priority,
     sanitize_prefix,
     aggregate_split_packages_by_room,
+    build_velocity_snapshot_entries,
+    compute_velocity_metrics,
 )
 
 # Extracted modules
@@ -69,6 +110,36 @@ def export_excel(
     timestamp: bool,
     prefix: Optional[str],
 ):
+    """
+    Export move-up and priority DataFrames to an Excel workbook (.xlsx).
+
+    Produces a single ``.xlsx`` file with up to two sheets:
+    - **Priority** sheet (if *priority_df* is non-empty): starred items,
+      sorted by backstock priority.  Barcodes in the priority sheet are
+      de-duplicated from *move_up_df* so no row appears in both sheets.
+    - **Move_Up_Items** sheet: remaining move-up items, also sorted.
+
+    Filename is ``Sticker_Sheet_Filtered_Move_Up[_prefix][_timestamp].xlsx``
+    in *base_dir*.
+
+    Parameters
+    ----------
+    move_up_df : pd.DataFrame
+        Move-up candidates (output of the pipeline from ``_recompute_from_current``).
+    priority_df : pd.DataFrame | None
+        Starred/priority items.  ``None`` or empty produces only the Move_Up_Items sheet.
+    base_dir : str
+        Output directory (the timestamped export run directory).
+    timestamp : bool
+        If ``True``, append a ``YYYY-MM-DD_HH-MM`` timestamp to the filename.
+    prefix : str | None
+        Optional user-defined filename prefix (sanitised via ``sanitize_prefix()``).
+
+    Returns
+    -------
+    str
+        Absolute path to the written ``.xlsx`` file.
+    """
     parts = ["Sticker_Sheet_Filtered_Move_Up"]
     if timestamp:
         parts.append(datetime.now().strftime("%Y-%m-%d_%H-%M"))
@@ -100,8 +171,38 @@ def export_excel(
 # GUI
 # ------------------------------
 class MoveUpGUI:
+    """
+    Main application window.
+
+    Manages four treeview tabs (Move-Up, Priority, Excluded, All Items),
+    toolbar controls, file import workflow, move-up computation pipeline,
+    and PDF/Excel export. Integrates with Bisa companion widget, velocity
+    tracking, and satellite windows (Expiring, Samples, Velocity).
+    """
 
     def __init__(self, root: Tk):
+        """
+        Initialise the main application window.
+
+        Sets up all Tk variables, loads persisted config, builds the UI, and
+        restores Bisa's companion stats.  After ``__init__`` completes the app
+        is fully interactive — no deferred initialisation.
+
+        Initialisation order matters:
+        1. Create Tk variables (before ``_load_config`` tries to ``.set()`` them).
+        2. Create ``ConfigManager`` (needs root for the backup-restore prompt).
+        3. Load velocity and import history managers (needed before UI creation
+           so their data is available for initial display).
+        4. ``_load_config()`` — populates filters, barcodes, Bisa stats from JSON.
+        5. ``_build_ui()`` — creates all widgets (depends on Tk vars being set).
+        6. Restore Bisa state and apply theme (depends on ``dog_widget`` existing).
+
+        Parameters
+        ----------
+        root : Tk
+            The application Tk root window.  Geometry, title, and protocol
+            (WM_DELETE_WINDOW → ``_on_app_close``) are all set here.
+        """
         self.root = root
         self.base_title = f"{APP_NAME} v{APP_VERSION}"
         self.root.title(self.base_title)
@@ -110,57 +211,72 @@ class MoveUpGUI:
         self.style = ttk.Style(self.root)
         self.base_theme = self.style.theme_use()
 
-        # Persisted vars
-        self.printer_bw_var = BooleanVar(value=False)
-        self.skip_sales_floor_var = BooleanVar(value=False)
-        self.hide_removed_var = BooleanVar(value=True)
-        self.auto_open_var = BooleanVar(value=(os.name == "nt"))
-        self.timestamp_var = BooleanVar(value=True)
-        self.page_items_var = IntVar(value=35)
-        self.prefix_var = StringVar(value="")
-        self.show_advanced_var = BooleanVar(value=False)
+        # --- Tk variables (bound to GUI controls, persisted to config on save) ---
+        self.printer_bw_var = BooleanVar(value=False)       # B/W mode for PDF export
+        self.skip_sales_floor_var = BooleanVar(value=False)  # Skip SF check in moveup logic
+        self.hide_removed_var = BooleanVar(value=True)       # Hide excluded items from tree
+        self.auto_open_var = BooleanVar(value=(os.name == "nt"))  # Auto-open PDF after export
+        self.timestamp_var = BooleanVar(value=True)          # Append timestamp to filenames
+        self.page_items_var = IntVar(value=35)               # Items per page in PDF
+        self.prefix_var = StringVar(value="")                # Filename prefix for exports
+        self.show_advanced_var = BooleanVar(value=False)     # Show/hide advanced toolbar
 
-        # Active display columns (may differ from COLUMNS_TO_USE at runtime)
+        # active_columns = user-configurable subset of columns shown in the Move-Up tab.
+        # COLUMNS_TO_USE (from data_core) is the full required set for internal logic.
+        # DISPLAY_EXTRA_COLUMNS (e.g. "Received Date", "Velocity") are appended when present.
         self.active_columns: List[str] = list(COLUMNS_TO_USE)
-        self._sort_state: Dict[str, Dict[str, bool]] = {}  # {tree_id: {col: ascending}}
+        self._sort_state: Dict[str, Dict[str, bool]] = {}  # per-tree sort direction state
 
-        self._button_registry = []
+        self._button_registry = []  # tracks buttons for kawaii label toggling
         self._create_kawaii_theme()
 
         self.cfg = ConfigManager(tk_root=self.root)
         self.app_dir = self.cfg.app_dir
 
+        # --- Velocity tracking ---
+        # velocity_df is computed after import if history has snapshots, otherwise None.
+        # When not None, a "Velocity" column is merged into moveup_df for treeview display.
+        self.velocity_mgr = VelocityHistoryManager(self.app_dir)
+        self.velocity_mgr.load()
+        self.velocity_df: Optional[pd.DataFrame] = None
+
+        # --- Import history tracking ---
+        self.import_history_mgr = ImportHistoryManager(self.app_dir)
+        self.import_history_mgr.load()
+
+        # Export output goes to generated/<timestamp>/
         self.export_root = os.path.join(self.app_dir, "generated")
         os.makedirs(self.export_root, exist_ok=True)
-        self._export_run_dir: Optional[str] = None  # created lazily on first export/open
+        self._export_run_dir: Optional[str] = None  # created lazily on first export
 
-        # Persistent filters + aliases
-        self.room_alias_map: Dict[str, str] = {}
-        self.selected_rooms: List[str] = []
-        self.selected_brands: List[str] = []
-        self.selected_types: List[str] = []
+        # --- Persistent filters (loaded from config, applied in _recompute_from_current) ---
+        self.room_alias_map: Dict[str, str] = {}   # user-defined room name aliases
+        self.selected_rooms: List[str] = []          # candidate rooms for moveup
+        self.selected_brands: List[str] = []         # brand filter (empty = all)
+        self.selected_types: List[str] = []          # type filter (empty = all)
 
-        self.last_import_dir: Optional[str] = None
-        self.current_file_path: Optional[str] = None
+        self.last_import_dir: Optional[str] = None   # remembered for file dialog
+        self.current_file_path: Optional[str] = None  # path of currently loaded file
 
-        # Runtime state
-        self.raw_df: Optional[pd.DataFrame] = None
-        self.current_df: Optional[pd.DataFrame] = None
-        self.col_mapping_override: Dict[str, str] = {}
-        self.moveup_df: Optional[pd.DataFrame] = None
-        self.excluded_barcodes: set = set()
-        self.kuntal_priority_barcodes: set = set()
+        # --- Runtime data state ---
+        self.raw_df: Optional[pd.DataFrame] = None        # raw DataFrame from file import
+        self.current_df: Optional[pd.DataFrame] = None     # after column mapping + normalization
+        self.col_mapping_override: Dict[str, str] = {}     # manual column renames from dialog
+        self.moveup_df: Optional[pd.DataFrame] = None      # computed move-up candidates
+        self.excluded_barcodes: set = set()                 # barcodes removed from moveup view
+        self.kuntal_priority_barcodes: set = set()          # barcodes marked as priority
 
-        self.filters_window: Optional[Toplevel] = None
+        self.filters_window: Optional[Toplevel] = None  # ref to open filters dialog (prevents dupes)
+        self._importing: bool = False  # guard against concurrent imports
 
-        # Lifetime Bisa stats (loaded from config before UI is built)
+        # --- Bisa companion stats (persisted across sessions) ---
         self._lifetime_pets: int = 0
         self._lifetime_treats: int = 0
         self._lifetime_moveups: int = 0
         self._bisa_name: str = "Bisa"
         self._catnip_redeemed: int = 0
 
-        # Previous inventory snapshot for move-up detection (barcode → room, lowercase)
+        # Snapshot of previous import's (barcode → room) for detecting moves between imports
         self._prev_inventory_snapshot: Dict[str, str] = {}
 
         self._load_config()
@@ -177,7 +293,7 @@ class MoveUpGUI:
         self.dog_widget.greet_startup()
 
         self._bind_window_treat()
-        self._toggle_theme(initial=True)
+        self._apply_kawaii_theme(initial=True)
         self._refresh_button_labels()
         self._update_kuntalcount()
 
@@ -187,7 +303,18 @@ class MoveUpGUI:
     # Config persistence
     # ------------------------------
     def _load_config(self):
-        """Pull persisted config from disk via ConfigManager."""
+        """
+        Load persisted config from ``moveup_config.json`` and populate GUI state.
+
+        Calls ``self.cfg.load()`` which reads the JSON, validates types and paths,
+        and populates ``self.cfg.data``.  Then copies each config value into the
+        corresponding Tk variable or instance attribute:
+        - Tk BooleanVars / IntVars / StringVars get ``.set()`` calls.
+        - Filter lists (rooms, brands, types) are plain Python lists.
+        - Excluded/priority barcodes are stored as Python ``set`` objects for O(1) lookup.
+        - Validated paths (last_import_dir, current_file_path) are only applied
+          if the path still exists on disk.
+        """
         self.cfg.load(valid_columns=list(COLUMNS_TO_USE))
         c = self.cfg
 
@@ -203,10 +330,7 @@ class MoveUpGUI:
         self.hide_removed_var.set(c["hide_removed"])
         self.auto_open_var.set(c["auto_open_pdf"])
         self.timestamp_var.set(c["timestamp"])
-        try:
-            self.page_items_var.set(c["items_per_page"])
-        except Exception:
-            pass
+        self.page_items_var.set(c.get("items_per_page", 35))
         self.prefix_var.set(c["prefix"])
 
         # Sets (stored as lists in JSON)
@@ -233,7 +357,17 @@ class MoveUpGUI:
         self._prev_inventory_snapshot = c["prev_inventory_snapshot"]
 
     def _save_config(self):
-        """Push GUI state into ConfigManager and write to disk."""
+        """
+        Collect current GUI state into ``ConfigManager`` and persist to disk.
+
+        Reads all live Tk variables, filter lists, excluded/priority barcode sets,
+        and Bisa companion stats (via ``dog_widget.get_state()`` if the widget
+        exists), then calls ``self.cfg.save()`` for an atomic write.
+
+        Called on every import, filter change, exclude/restore action, and on
+        ``_on_app_close()``.  Safe to call frequently — the atomic write pattern
+        ensures the config file is never partially written.
+        """
         c = self.cfg
         bs = self.dog_widget.get_state() if hasattr(self, "dog_widget") else {}
 
@@ -273,6 +407,14 @@ class MoveUpGUI:
         self._save_config()
 
     def _on_app_close(self):
+        """
+        Save config and destroy the root window on user close.
+
+        Registered as the ``WM_DELETE_WINDOW`` protocol handler so that config
+        is persisted whether the user clicks the X button, uses Alt+F4, or the
+        window is closed by the OS.  Any exception during ``root.destroy()`` is
+        caught and printed so a teardown error never hides the successful save.
+        """
         self._save_config()
         try:
             self.root.destroy()
@@ -284,7 +426,19 @@ class MoveUpGUI:
     # ------------------------------
     @property
     def export_run_dir(self) -> str:
-        """Lazily create the timestamped export directory on first actual use."""
+        """
+        Lazily create and return the timestamped export directory.
+
+        The directory is created the first time this property is accessed in
+        a given session (not at startup) so that an ``export_run_dir`` folder
+        is only ever created when the user actually exports something.
+
+        Format: ``<app_dir>/generated/YYYY-MM-DD_HH-MM/``
+
+        Subsequent calls within the same session return the same directory
+        (timestamp frozen at first access), so all exports in a session go
+        to one folder.
+        """
         if self._export_run_dir is None:
             self._export_run_dir = os.path.join(
                 self.export_root, datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -342,7 +496,7 @@ class MoveUpGUI:
         for btn, base in self._button_registry:
             btn.config(text=f"🌼 {base} 🌼")
 
-    def _toggle_theme(self, initial: bool = False):
+    def _apply_kawaii_theme(self, initial: bool = False):
         self.style.theme_use("kawaii_daisy")
         self.root.title(self.base_title + " 🌼🌼🌼")
         self._refresh_button_labels()
@@ -368,6 +522,50 @@ class MoveUpGUI:
         except Exception as e:
             messagebox.showerror("Sample Manager", f"Could not open window:\n\n{e}")
 
+    def open_velocity_window(self):
+        try:
+            from mainVelocity import open_velocity_window
+            open_velocity_window(
+                self.root,
+                self.current_df,
+                self.velocity_df,
+                self.velocity_mgr,
+            )
+        except Exception as e:
+            messagebox.showerror("Velocity", f"Could not open window:\n\n{e}")
+
+    def open_multi_store_window(self):
+        try:
+            from mainMultiStore import open_multi_store_window
+            open_multi_store_window(self.root, self.current_file_path)
+        except Exception as e:
+            messagebox.showerror("Multi-Store", f"Could not open window:\n\n{e}")
+
+    def open_analytics_window(self):
+        try:
+            from mainAnalytics import open_analytics_window
+            open_analytics_window(self.root, self.current_file_path)
+        except Exception as e:
+            messagebox.showerror("Analytics", f"Could not open window:\n\n{e}")
+
+    def open_import_history_window(self):
+        try:
+            from mainImportHistory import open_import_history_window
+            open_import_history_window(
+                self.root,
+                self.import_history_mgr,
+                self.velocity_mgr,
+            )
+        except Exception as e:
+            messagebox.showerror("Import History", f"Could not open window:\n\n{e}")
+
+    def open_help_window(self):
+        try:
+            from mainHelp import open_help_window
+            open_help_window(self.root)
+        except Exception as e:
+            messagebox.showerror("Help", f"Could not open help window:\n\n{e}")
+
     # ------------------------------
     # UI
     # ------------------------------
@@ -381,32 +579,67 @@ class MoveUpGUI:
         # ── Left: all controls ──
         frm_controls = ttk.LabelFrame(frm_top_row, text="Controls", padding=8)
         frm_controls.pack(side="left", fill="both", expand=True, padx=(0, 12))
-        btn_row = ttk.Frame(frm_controls)
-        btn_row.pack(fill="x", pady=(0, 4))
+        # Row 1: core actions
+        btn_row1 = ttk.Frame(frm_controls)
+        btn_row1.pack(fill="x", pady=(0, 4))
 
-        btn_import = ttk.Button(btn_row, text="Import File…", command=self.import_file)
-        btn_import.pack(side="left", padx=4)
-        self._register_button(btn_import, "Import File…")
+        self.btn_import = ttk.Button(btn_row1, text="Import File…", command=self.import_file)
+        self.btn_import.pack(side="left", padx=4)
+        self._register_button(self.btn_import, "Import File…")
 
-        btn_pdf = ttk.Button(btn_row, text="Export PDF", command=self.do_export_pdf)
-        btn_pdf.pack(side="left", padx=4)
-        self._register_button(btn_pdf, "Export PDF")
+        self.btn_pdf = ttk.Button(btn_row1, text="Export PDF", command=self.do_export_pdf)
+        self.btn_pdf.pack(side="left", padx=4)
+        self._register_button(self.btn_pdf, "Export PDF")
 
-        btn_audit = ttk.Button(btn_row, text="Audit PDFs…", command=self.open_audit_window)
+        btn_audit = ttk.Button(btn_row1, text="Audit PDFs…", command=self.open_audit_window)
         btn_audit.pack(side="left", padx=4)
         self._register_button(btn_audit, "Audit PDFs…")
 
+        # Row 2: satellite windows
+        btn_row2 = ttk.Frame(frm_controls)
+        btn_row2.pack(fill="x", pady=(0, 4))
+
         btn_expiring = ttk.Button(
-            btn_row, text="Expiring Soon…", command=self.open_expiring_window,
+            btn_row2, text="Expiring Soon…", command=self.open_expiring_window,
         )
         btn_expiring.pack(side="left", padx=4)
         self._register_button(btn_expiring, "Expiring Soon…")
 
         btn_samples = ttk.Button(
-            btn_row, text="Sample Manager…", command=self.open_sample_manager,
+            btn_row2, text="Sample Manager…", command=self.open_sample_manager,
         )
         btn_samples.pack(side="left", padx=4)
         self._register_button(btn_samples, "Sample Manager…")
+
+        btn_velocity = ttk.Button(
+            btn_row2, text="Velocity…", command=self.open_velocity_window,
+        )
+        btn_velocity.pack(side="left", padx=4)
+        self._register_button(btn_velocity, "Velocity…")
+
+        btn_multistore = ttk.Button(
+            btn_row2, text="Multi-Store…", command=self.open_multi_store_window,
+        )
+        btn_multistore.pack(side="left", padx=4)
+        self._register_button(btn_multistore, "Multi-Store…")
+
+        btn_analytics = ttk.Button(
+            btn_row2, text="Analytics…", command=self.open_analytics_window,
+        )
+        btn_analytics.pack(side="left", padx=4)
+        self._register_button(btn_analytics, "Analytics…")
+
+        btn_history = ttk.Button(
+            btn_row2, text="History…", command=self.open_import_history_window,
+        )
+        btn_history.pack(side="left", padx=4)
+        self._register_button(btn_history, "History…")
+
+        btn_help = ttk.Button(
+            btn_row2, text="Help", command=self.open_help_window,
+        )
+        btn_help.pack(side="left", padx=4)
+        self._register_button(btn_help, "Help")
 
         # Advanced toggle (ANCHOR target for frm_advanced)
         self.frm_adv_toggle = ttk.Frame(frm_controls)
@@ -425,9 +658,9 @@ class MoveUpGUI:
         btn_map.pack(side="left", padx=4)
         self._register_button(btn_map, "Map Columns…")
 
-        btn_xlsx = ttk.Button(adv_row, text="Export Excel", command=self.do_export_xlsx)
-        btn_xlsx.pack(side="left", padx=4)
-        self._register_button(btn_xlsx, "Export Excel")
+        self.btn_xlsx = ttk.Button(adv_row, text="Export Excel", command=self.do_export_xlsx)
+        self.btn_xlsx.pack(side="left", padx=4)
+        self._register_button(self.btn_xlsx, "Export Excel")
 
         btn_folder = ttk.Button(adv_row, text="Open Output Folder", command=self.open_output_folder)
         btn_folder.pack(side="left", padx=4)
@@ -519,16 +752,19 @@ class MoveUpGUI:
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", self._on_moveup_double_click)
         self.tree.bind("<ButtonRelease-1>", self._on_moveup_single_click)
+        self._bind_tree_context_menu(self.tree, self.active_columns)
 
         self.k_tree = ttk.Treeview(self.tab_kuntal, columns=tuple(COLUMNS_TO_USE), show="headings", height=18)
         self._configure_tree_columns(self.k_tree, COLUMNS_TO_USE)
         self.k_tree.pack(fill="both", expand=True)
         self.k_tree.bind("<Double-Button-1>", self._kuntal_tree_double_click)
+        self._bind_tree_context_menu(self.k_tree, list(COLUMNS_TO_USE))
 
         self.x_tree = ttk.Treeview(self.tab_excluded, columns=tuple(COLUMNS_TO_USE), show="headings", height=18)
         self._configure_tree_columns(self.x_tree, COLUMNS_TO_USE)
         self.x_tree.pack(fill="both", expand=True)
         self.x_tree.bind("<Double-1>", self._on_excluded_double_click)
+        self._bind_tree_context_menu(self.x_tree, list(COLUMNS_TO_USE))
 
         frm_all_top = ttk.Frame(self.tab_all)
         frm_all_top.pack(fill="x", padx=6, pady=(6, 2))
@@ -548,6 +784,7 @@ class MoveUpGUI:
         self.all_tree.pack(side="left", fill="both", expand=True)
         all_sb.pack(side="right", fill="y")
         self.all_tree.bind("<Double-Button-1>", self._all_tree_double_click)
+        self._bind_tree_context_menu(self.all_tree, list(COLUMNS_TO_USE))
 
         self.all_search_var.trace_add("write", lambda *_: self._render_all_tree(self.current_df))
 
@@ -617,16 +854,30 @@ class MoveUpGUI:
         self.moveupcount_var.set(f"Move-Up items: {n}")
         try:
             self.nb.tab(self.tab_moveup, text=f"Move-Up ({n})")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[moveup] tab count update failed: {e}")
 
     def _update_kuntalcount(self):
         n = len(self.kuntal_priority_barcodes)
         self.kuntalcount_var.set(f"Priority! items: {n}")
         try:
             self.nb.tab(self.tab_kuntal, text=f"Priority! ({n})")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[moveup] tab count update failed: {e}")
+
+    def _update_excluded_tab_count(self, df: Optional[pd.DataFrame]):
+        n = 0 if df is None else len(df)
+        try:
+            self.nb.tab(self.tab_excluded, text=f"Excluded / Removed ({n})")
+        except Exception as e:
+            print(f"[moveup] tab count update failed: {e}")
+
+    def _update_all_tab_count(self, df: Optional[pd.DataFrame]):
+        n = 0 if df is None else len(df)
+        try:
+            self.nb.tab(self.tab_all, text=f"All Items ({n})")
+        except Exception as e:
+            print(f"[moveup] tab count update failed: {e}")
 
     # ------------------------------
     # Window-wide treat throwing
@@ -670,7 +921,10 @@ class MoveUpGUI:
     # ------------------------------
     # Display columns (core + optional extras if present in data)
     # ------------------------------
-    DISPLAY_EXTRA_COLUMNS = ["Received Date"]
+    # These columns are appended to treeviews automatically when they exist in the
+    # DataFrame. "Received Date" comes from the METRC import; "Velocity" is injected
+    # by _recompute_from_current() when velocity history has enough snapshots.
+    DISPLAY_EXTRA_COLUMNS = ["Received Date", "Velocity"]
 
     def _display_cols_for(self, df: "Optional[pd.DataFrame]" = None) -> List[str]:
         return get_display_cols(
@@ -701,15 +955,48 @@ class MoveUpGUI:
     # Import / mapping
     # ------------------------------
     def import_file(self):
+        """
+        Import a METRC inventory file: load, automap columns, compute move-ups, save snapshots.
+
+        Full import pipeline:
+        1. Guard: return immediately if ``_importing`` is already ``True``
+           (prevents re-entrant double-import from rapid button clicks).
+        2. Show file dialog filtered to supported formats (xlsx, csv, tsv, ods, etc.).
+        3. Load raw DataFrame via ``load_raw_df()``.
+        4. Auto-map columns via ``automap_columns()``:
+           - On success: populate ``self.current_df`` and update status.
+           - On failure: clear ``self.current_df``, show error dialog and offer
+             manual column mapping.
+        5. If mapping succeeded, trigger ``_recompute_from_current()`` to run
+           the full move-up pipeline.
+        6. Save a velocity snapshot to ``VelocityHistoryManager``.
+        7. Save an import history entry to ``ImportHistoryManager``.
+        8. Persist config (last dir, file path, Bisa stats).
+        9. Animate Bisa's celebration reaction.
+
+        The ``_importing`` flag and ``btn_import`` disable/enable are handled
+        in a ``try/finally`` block so the lock is always released on completion
+        or exception.
+        """
+        if self._importing:
+            return
         initialdir = self.last_import_dir if (self.last_import_dir and os.path.isdir(self.last_import_dir)) else None
         path = filedialog.askopenfilename(
             title="Select Inventory File",
-            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv")],
+            filetypes=[
+                ("All Supported", "*.xlsx *.xls *.xlsm *.xlsb *.ods *.csv *.tsv *.txt *.tab"),
+                ("Excel", "*.xlsx *.xls *.xlsm *.xlsb"),
+                ("CSV / Text", "*.csv *.tsv *.txt *.tab"),
+                ("OpenDocument", "*.ods"),
+            ],
             initialdir=initialdir
         )
         if not path:
             return
 
+        self._importing = True
+        if hasattr(self, "btn_import"):
+            self.btn_import.config(state="disabled")
         try:
             self.last_import_dir = os.path.dirname(path)
             self.current_file_path = path
@@ -728,7 +1015,11 @@ class MoveUpGUI:
                 self.kuntal_priority_barcodes = {bc for bc in self.kuntal_priority_barcodes if bc in present}
                 self._update_kuntalcount()
 
-                self.status.set(f"Loaded {len(mapped)} rows. Auto-mapped columns.")
+                junk_dropped = len(raw) - len(mapped)
+                status_msg = f"Loaded {len(mapped)} rows. Auto-mapped columns."
+                if junk_dropped > 0:
+                    status_msg += f" ({junk_dropped} junk row{'s' if junk_dropped != 1 else ''} ignored)"
+                self.status.set(status_msg)
 
                 # --- Bisa move-up detection ---
                 # Build a normalized room snapshot for the new inventory
@@ -761,20 +1052,57 @@ class MoveUpGUI:
                     self.dog_widget.react_moveups(_moved)
                 elif hasattr(self, "dog_widget"):
                     self.dog_widget.react_data_loaded(len(mapped))
+
+                # --- Velocity + Import history snapshots ---
+                import_ts = datetime.now().isoformat()
+                vel_entries = []
+                try:
+                    vel_entries = build_velocity_snapshot_entries(mapped)
+                    if vel_entries:
+                        self.velocity_mgr.add_snapshot(
+                            import_ts,
+                            os.path.basename(path),
+                            vel_entries,
+                        )
+                except Exception as e:
+                    print(f"[moveup] velocity snapshot save failed: {e}")
+
                 # ------------------------------------
 
                 self._update_rowcount(mapped)
                 self._recompute_from_current()
+
+                # --- Import history entry (after recompute so moveup_df is available) ---
+                try:
+                    self.import_history_mgr.add_entry(
+                        timestamp=import_ts,
+                        file_name=os.path.basename(path),
+                        total_rows=len(raw),
+                        mapped_rows=len(mapped),
+                        moveup_count=len(self.moveup_df) if self.moveup_df is not None else 0,
+                        diag={},
+                        unique_brands=mapped["Brand"].nunique() if "Brand" in mapped.columns else 0,
+                        unique_types=mapped["Type"].nunique() if "Type" in mapped.columns else 0,
+                        unique_rooms=mapped["Room"].nunique() if "Room" in mapped.columns else 0,
+                        total_qty=int(mapped["Qty On Hand"].sum()) if "Qty On Hand" in mapped.columns else 0,
+                        velocity_entries_count=len(vel_entries),
+                        bisa_moveups=_moved,
+                    )
+                except Exception as e:
+                    print(f"[moveup] import history save failed: {e}")
+
                 return
 
-            except Exception:
+            except (ValueError, KeyError, TypeError) as e:
+                print(f"[moveup] Auto-mapping failed, falling back to manual: {e}")
                 self.current_df = None
+                self._recompute_from_current()  # clear stale treeview data
                 self._update_rowcount(raw)
                 self.status.set(f"Loaded raw file ({len(raw)} rows). Needs manual column mapping.")
 
                 go = messagebox.askyesno(
                     "Manual Mapping Needed",
-                    "This file doesn't match the expected columns.\n\n"
+                    f"This file doesn't match the expected columns.\n\nReason: {e}\n\n"
                     "Do you want to manually map columns now?"
                 )
                 if go:
@@ -784,6 +1112,10 @@ class MoveUpGUI:
         except Exception as e:
             messagebox.showerror("Error", str(e))
             self.status.set(f"Error: {e}")
+        finally:
+            self._importing = False
+            if hasattr(self, "btn_import"):
+                self.btn_import.config(state="normal")
 
     def map_columns_dialog(self, force: bool = False):
         if self.raw_df is None or self.raw_df.empty:
@@ -815,7 +1147,7 @@ class MoveUpGUI:
             try:
                 self.filters_window.lift()
                 self.filters_window.focus_force()
-            except Exception:
+            except tk.TclError:
                 pass
             return
 
@@ -951,48 +1283,33 @@ class MoveUpGUI:
     # ------------------------------
     # Remove / Kuntal
     # ------------------------------
-    def _remove_selected(self):
+    def _selected_barcodes(self) -> list:
+        """Extract non-empty barcode strings from the current tree selection."""
         sel = self.tree.selection()
         if not sel:
-            messagebox.showinfo("Remove", "Select row(s) first.")
-            return
+            return []
         idx_bar = self.active_columns.index("Package Barcode")
-        removed = 0
+        barcodes = []
         for iid in sel:
             vals = self.tree.item(iid, "values")
             if not vals or len(vals) <= idx_bar:
                 continue
             bc = str(vals[idx_bar]).strip()
             if bc:
-                self.excluded_barcodes.add(bc)
-                removed += 1
-        self._recompute_from_current()
-        self.status.set(f"Removed {removed} item(s) this session.")
-        self._save_config()
+                barcodes.append(bc)
+        return barcodes
 
     def _toggle_remove_selected(self):
-        sel = self.tree.selection()
-        if not sel:
+        barcodes = self._selected_barcodes()
+        if not barcodes:
             return
-        idx_bar = self.active_columns.index("Package Barcode")
-        toggled = 0
-        for iid in sel:
-            vals = self.tree.item(iid, "values")
-            if not vals or len(vals) <= idx_bar:
-                continue
-            bc = str(vals[idx_bar]).strip()
-            if not bc:
-                continue
-            if bc in self.excluded_barcodes:
-                self.excluded_barcodes.remove(bc)
-            else:
-                self.excluded_barcodes.add(bc)
-            toggled += 1
+        for bc in barcodes:
+            self.excluded_barcodes.symmetric_difference_update({bc})
         self._recompute_from_current()
-        self.status.set(f"Toggled remove on {toggled} item(s).")
+        self.status.set(f"Toggled remove on {len(barcodes)} item(s).")
         self._save_config()
-        if toggled and hasattr(self, "dog_widget"):
-            self.dog_widget.react_excluded(toggled)
+        if hasattr(self, "dog_widget"):
+            self.dog_widget.react_excluded(len(barcodes))
 
     def _clear_removed(self):
         self.excluded_barcodes.clear()
@@ -1003,30 +1320,18 @@ class MoveUpGUI:
             self.dog_widget.react_cleared()
 
     def _toggle_kuntal_selected(self):
-        sel = self.tree.selection()
-        if not sel:
+        barcodes = self._selected_barcodes()
+        if not barcodes:
             messagebox.showinfo("Priority!", "Select row(s) first.")
             return
-        idx_bar = self.active_columns.index("Package Barcode")
-        toggled = 0
-        for iid in sel:
-            vals = self.tree.item(iid, "values")
-            if not vals or len(vals) <= idx_bar:
-                continue
-            bc = str(vals[idx_bar]).strip()
-            if not bc:
-                continue
-            if bc in self.kuntal_priority_barcodes:
-                self.kuntal_priority_barcodes.remove(bc)
-            else:
-                self.kuntal_priority_barcodes.add(bc)
-            toggled += 1
+        for bc in barcodes:
+            self.kuntal_priority_barcodes.symmetric_difference_update({bc})
         self._update_kuntalcount()
         self._recompute_from_current()
-        self.status.set(f"Toggled Priority! on {toggled} item(s).")
+        self.status.set(f"Toggled Priority! on {len(barcodes)} item(s).")
         self._save_config()
-        if toggled and hasattr(self, "dog_widget"):
-            self.dog_widget.react_kuntal(toggled)
+        if hasattr(self, "dog_widget"):
+            self.dog_widget.react_kuntal(len(barcodes))
 
     def _clear_kuntal_list(self):
         self.kuntal_priority_barcodes.clear()
@@ -1117,7 +1422,7 @@ class MoveUpGUI:
             if not bc:
                 continue
             if bc in self.excluded_barcodes:
-                self.excluded_barcodes.remove(bc)
+                self.excluded_barcodes.discard(bc)
                 restored += 1
                 restored_bcs.append(bc)
 
@@ -1152,6 +1457,101 @@ class MoveUpGUI:
         self._save_config()
         if hasattr(self, "dog_widget"):
             self.dog_widget.react_restored(restored)
+
+    # ------------------------------
+    # Right-click context menu (all treeviews)
+    # ------------------------------
+    def _bind_tree_context_menu(self, tree: ttk.Treeview, cols: list):
+        """Bind right-click context menu to a treeview."""
+        def _on_right_click(event):
+            iid = tree.identify_row(event.y)
+            if not iid:
+                return
+            tree.selection_set(iid)
+            vals = tree.item(iid, "values")
+            if not vals:
+                return
+
+            menu = tk.Menu(self.root, tearoff=0)
+            menu.add_command(
+                label="View Details",
+                command=lambda: self._show_detail_popup(tree, iid),
+            )
+
+            # Find barcode column
+            try:
+                bc_idx = list(cols).index("Package Barcode")
+                bc = str(vals[bc_idx]).strip()
+                if bc:
+                    menu.add_command(
+                        label=f"Copy Barcode ({bc[-8:]})",
+                        command=lambda: self._copy_to_clipboard(bc),
+                    )
+            except (ValueError, IndexError):
+                pass
+
+            menu.add_separator()
+
+            # Find product name column
+            try:
+                name_idx = list(cols).index("Product Name")
+                name = str(vals[name_idx]).strip()
+                if name:
+                    menu.add_command(
+                        label="Copy Product Name",
+                        command=lambda: self._copy_to_clipboard(name),
+                    )
+            except (ValueError, IndexError):
+                pass
+
+            menu.tk_popup(event.x_root, event.y_root)
+
+        tree.bind("<Button-3>", _on_right_click)
+
+    def _copy_to_clipboard(self, text: str):
+        """Copy text to system clipboard."""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status.set(f"Copied: {text[:40]}{'…' if len(text) > 40 else ''}")
+
+    def _show_detail_popup(self, tree: ttk.Treeview, iid: str):
+        """Show a popup with all field values for the selected row."""
+        vals = tree.item(iid, "values")
+        cols = list(tree["columns"])
+        if not vals or not cols:
+            return
+
+        popup = Toplevel(self.root)
+        popup.title("Item Details")
+        popup.geometry("480x360")
+        popup.transient(self.root)
+        popup.grab_set()
+
+        frm = ttk.Frame(popup, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        # Detail grid
+        for i, (col, val) in enumerate(zip(cols, vals)):
+            # Clean emoji prefixes from Room column for display
+            clean_val = str(val).strip()
+            ttk.Label(frm, text=f"{col}:", font=("TkDefaultFont", 9, "bold")).grid(
+                row=i, column=0, sticky="ne", padx=(0, 8), pady=2,
+            )
+            lbl = ttk.Label(frm, text=clean_val, wraplength=320)
+            lbl.grid(row=i, column=1, sticky="nw", pady=2)
+
+        # Copy All button
+        btn_frame = ttk.Frame(popup, padding=(12, 4, 12, 12))
+        btn_frame.pack(fill="x")
+
+        def _copy_all():
+            lines = [f"{c}: {v}" for c, v in zip(cols, vals)]
+            self._copy_to_clipboard("\n".join(lines))
+
+        ttk.Button(btn_frame, text="Copy All", command=_copy_all).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Close", command=popup.destroy).pack(side="right", padx=4)
+
+        popup.focus_set()
 
     # ------------------------------
     # Manual Add
@@ -1243,6 +1643,20 @@ class MoveUpGUI:
     # Recompute
     # ------------------------------
     def _recompute_from_current(self):
+        """Re-run the full move-up pipeline and refresh all 4 treeview tabs.
+
+        This is the main refresh entry point — called after import, filter changes,
+        priority/exclude toggles, or settings changes. The pipeline:
+          1. compute_moveup_from_df() with current filters → raw candidates
+          2. aggregate_split_packages_by_room() → merge duplicate rows
+          3. Strip excluded barcodes (if hide_removed is on)
+          4. Sort with backstock priority
+          5. Inject velocity labels (if history exists)
+          6. Render all 4 treeviews + update status bar diagnostics
+        """
+        self.status.set("Computing…")
+        self.root.update_idletasks()
+
         df = self.current_df
         if df is None or df.empty:
             self._render_tree(pd.DataFrame(columns=COLUMNS_TO_USE))
@@ -1252,6 +1666,8 @@ class MoveUpGUI:
             self._update_rowcount(None)
             self._update_moveupcount(None)
             self._update_kuntalcount()
+            self._update_excluded_tab_count(None)
+            self._update_all_tab_count(None)
             self.status.set("No data loaded.")
             self.diag_var.set("")
             self.filters_summary_var.set("Filters: none (no data)")
@@ -1274,6 +1690,30 @@ class MoveUpGUI:
             move_up_df = move_up_df[~move_up_df["Package Barcode"].astype(str).fillna("").isin(self.excluded_barcodes)].copy()
 
         move_up_df = sort_with_backstock_priority(move_up_df)
+
+        # --- Inject velocity labels if history exists ---
+        try:
+            self.velocity_df = compute_velocity_metrics(
+                df, self.velocity_mgr.get_snapshots(),
+            )
+            if (
+                self.velocity_df is not None
+                and not self.velocity_df.empty
+                and not move_up_df.empty
+                and "velocity_label" in self.velocity_df.columns
+            ):
+                vel_map = dict(zip(
+                    self.velocity_df["Package Barcode"].astype(str),
+                    self.velocity_df["velocity_label"],
+                ))
+                move_up_df = move_up_df.copy()
+                move_up_df["Velocity"] = (
+                    move_up_df["Package Barcode"].astype(str).map(vel_map).fillna("New")
+                )
+        except Exception as e:
+            print(f"[moveup] velocity computation failed: {e}")
+            self.velocity_df = None
+
         self.moveup_df = move_up_df
 
         # Rebuild all treeview column sets in case Received Date appeared/disappeared
@@ -1288,7 +1728,9 @@ class MoveUpGUI:
 
         excl_df = self._get_excluded_df()
         self._render_excluded_tree(excl_df)
+        self._update_excluded_tab_count(excl_df)
         self._render_all_tree(df)
+        self._update_all_tab_count(df)
 
         self.status.set(f"Loaded {len(df)} rows; Move-Up {len(move_up_df)}")
 
@@ -1312,9 +1754,31 @@ class MoveUpGUI:
     # Exports
     # ------------------------------
     def do_export_pdf(self):
+        """
+        Export the move-up sticker sheet as a paginated PDF.
+
+        Writes to ``self.export_run_dir`` (lazily created on first export).
+        Imports ``pdf_export`` lazily so a missing ``reportlab`` doesn't crash
+        startup — the import error only surfaces when the user clicks Export.
+
+        Excluded-barcode filtering:
+        - When ``hide_removed=True``: excluded items were already stripped from
+          ``self.moveup_df`` in ``_recompute_from_current()`` — no extra filter needed.
+        - When ``hide_removed=False``: excluded items are visible (greyed out)
+          in the treeview but must still be omitted from the PDF.
+
+        The ``btn_pdf`` button is disabled at the start and re-enabled in a
+        ``finally`` block to prevent double-export race conditions.  Bisa reacts
+        with a success or error animation based on the outcome.
+        """
         if self.moveup_df is None:
             messagebox.showwarning("No data", "Import first.")
             return
+
+        if hasattr(self, "btn_pdf"):
+            self.btn_pdf.config(state="disabled")
+        self.status.set("Exporting PDF…")
+        self.root.update_idletasks()
 
         # When hide_removed=True, excluded items were already stripped from moveup_df in
         # _recompute_from_current. We only need to filter here when hide_removed=False
@@ -1327,6 +1791,7 @@ class MoveUpGUI:
         prio_df = self._get_kuntal_priority_df()
 
         try:
+            from pdf_export import export_moveup_pdf_paginated
             p = export_moveup_pdf_paginated(
                 move_up_df=mu_use,
                 priority_df=prio_df,
@@ -1346,11 +1811,27 @@ class MoveUpGUI:
             self.status.set(f"Export error: {e}")
             if hasattr(self, "dog_widget"):
                 self.dog_widget.react_error("PDF failed 💥")
+        finally:
+            if hasattr(self, "btn_pdf"):
+                self.btn_pdf.config(state="normal")
 
     def do_export_xlsx(self):
+        """
+        Export the move-up list to an Excel workbook (.xlsx).
+
+        Applies the same excluded-barcode filtering logic as ``do_export_pdf()``.
+        Writes to ``self.export_run_dir`` via the module-level ``export_excel()``
+        function.  The ``btn_xlsx`` button is disabled at start and re-enabled
+        in a ``finally`` block.  Bisa reacts with success or error animation.
+        """
         if self.moveup_df is None:
             messagebox.showwarning("No data", "Import first.")
             return
+
+        if hasattr(self, "btn_xlsx"):
+            self.btn_xlsx.config(state="disabled")
+        self.status.set("Exporting Excel…")
+        self.root.update_idletasks()
 
         # Same logic as do_export_pdf — only filter here when hide_removed=False.
         if self.excluded_barcodes and not self.hide_removed_var.get():
@@ -1376,6 +1857,9 @@ class MoveUpGUI:
             self.status.set(f"Export error: {e}")
             if hasattr(self, "dog_widget"):
                 self.dog_widget.react_error("Excel failed 💥")
+        finally:
+            if hasattr(self, "btn_xlsx"):
+                self.btn_xlsx.config(state="normal")
 
 
 # ------------------------------
