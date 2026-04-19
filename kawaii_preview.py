@@ -158,7 +158,7 @@ class KawaiiPreviewDialog:
 
         self.canvas = tk.Canvas(right, width=780, height=640, bg="white", highlightthickness=1)
         self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Configure>", lambda _e: self.redraw())
+        self.canvas.bind("<Configure>", lambda _e: self.redraw())  # redraws on window resize so preview fills the panel
 
         ttk.Label(left, text="Controls", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 10))
 

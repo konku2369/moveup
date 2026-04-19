@@ -340,6 +340,7 @@ class ConfigManager:
         d = self.data
 
         # Dicts
+        # 'or {}' handles JSON null: json.load maps null → None, which raw.get() returns as the value, not the {} default.
         d["room_alias_map"] = dict(raw.get("room_alias_map", {}) or {})
 
         # Lists of strings

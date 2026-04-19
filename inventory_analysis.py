@@ -90,6 +90,7 @@ def compute_imbalances(
         smaller = max(min(qa, qb), 1)  # avoid div/0
         ratio = bigger / smaller
 
+        # Both conditions required: ratio alone flags 2 vs 1 (trivially thin stock); abs diff alone misses proportional gaps.
         if ratio >= 2.0 and abs(qa - qb) >= 3:
             overstocked = a_name if qa > qb else b_name
             results.append({

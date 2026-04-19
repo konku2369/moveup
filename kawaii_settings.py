@@ -138,6 +138,7 @@ class KawaiiSettings:
         if self.preset not in PRESETS_COLOR:
             self.preset = "Cute"
         self.bg_hue_pct = max(0, min(100, int(self.bg_hue_pct)))
+        # Upper bound is 300, not 100 — these are multipliers (200 = double intensity), not capped percentages.
         self.bg_intensity_pct = max(0, min(300, int(self.bg_intensity_pct)))
         self.elem_intensity_pct = max(0, min(300, int(self.elem_intensity_pct)))
         self.stars_base = max(0, int(self.stars_base))

@@ -121,7 +121,7 @@ class _FilterList:
         ttk.Button(btns, text="Select All", command=self.select_all).pack(side="left")
         ttk.Button(btns, text="Clear", command=self.clear_selection).pack(side="left", padx=6)
 
-        self.search_var.trace_add("write", lambda *_: self.refresh())
+        self.search_var.trace_add("write", lambda *_: self.refresh())  # trace_add passes (var, index, mode) — *_ discards all three
 
     def set_items(self, items: List[str]):
         """Replace the full option list and refresh the visible listbox."""

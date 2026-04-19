@@ -383,6 +383,7 @@ class ImportHistoryWindow(tk.Toplevel):
         # Fill area under line (subtle)
         fill_points = list(points) + [(points[-1][0], h - pad), (points[0][0], h - pad)]
         flat = [coord for pt in fill_points for coord in pt]
+        # stipple="gray25" simulates a semi-transparent fill; Tk's create_polygon has no real alpha channel.
         canvas.create_polygon(flat, fill="#DED9F0", outline="", stipple="gray25")
 
         # Line

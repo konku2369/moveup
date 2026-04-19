@@ -814,6 +814,7 @@ def export_moveup_pdf_paginated(
     title = "Move-Up Inventory List"
     prof = _kawaii_profile_from_settings(printer_bw) if kawaii_pdf else None
     if prof is not None:
+        # Fresh seed per export so decoration positions (stars, paws) are never identical between runs.
         prof["jitter_seed"] = random.randint(0, 999999)
 
     if not combined.empty:

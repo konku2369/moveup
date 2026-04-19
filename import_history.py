@@ -113,7 +113,7 @@ class ImportHistoryManager:
             if isinstance(raw, dict) and isinstance(raw.get("entries"), list):
                 self.entries = raw["entries"]
             elif isinstance(raw, list):
-                self.entries = raw
+                self.entries = raw  # legacy format: file was a bare JSON array before the dict wrapper was added
         except (json.JSONDecodeError, OSError, KeyError, TypeError) as e:
             print(f"[moveup] Warning: could not load import history: {e}")
 

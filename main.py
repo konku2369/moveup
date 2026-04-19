@@ -1304,6 +1304,7 @@ class MoveUpGUI:
         if not barcodes:
             return
         for bc in barcodes:
+            # symmetric_difference_update toggles each bc: adds if absent, removes if present — handles multi-select naturally.
             self.excluded_barcodes.symmetric_difference_update({bc})
         self._recompute_from_current()
         self.status.set(f"Toggled remove on {len(barcodes)} item(s).")

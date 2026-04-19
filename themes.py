@@ -60,6 +60,8 @@ def apply_theme(window, theme_name: str = "moveup_satellite") -> None:
         style instances.  ``theme_create`` is a no-op if the name already exists.
     """
     style = ttk.Style()
+    # clam is needed as the parent because it exposes all sub-elements MOVEUP_THEME customizes.
+    # If clam is unavailable, save the current theme before the attempt fails so fallback is correct.
     try:
         base = style.theme_use()
         style.theme_use("clam")

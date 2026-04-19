@@ -415,7 +415,7 @@ class DataModel:
                 f"Missing required columns. Found expiration={self.col_exp}, product={self.col_product}"
             )
 
-        # NEW: Create derived "METRC-6" column (from METRC last 6 digits)
+        # Last 6 digits only: full METRC tags are 24+ chars but the last 6 are what staff use to identify a package on the floor.
         df["METRC-6"] = df[self.col_metrc].map(metrc_last6) if (self.col_metrc and self.col_metrc in df.columns) else ""
         self.col_metrc6 = "METRC-6"
 

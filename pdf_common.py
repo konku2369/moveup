@@ -178,7 +178,7 @@ def compute_column_widths(
     if s > 0:
         scale = total_width / s
         return [max(min_width, int(w * scale)) for w in raw]
-    return [max(min_width, int(total_width / max(1, len(columns))))] * len(columns)
+    return [max(min_width, int(total_width / max(1, len(columns))))] * len(columns)  # fallback: all multipliers were 0, divide evenly
 
 
 # ---------------------------------------------------------------------------

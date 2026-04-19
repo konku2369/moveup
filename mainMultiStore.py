@@ -263,6 +263,7 @@ class MultiStoreWindow:
             diff = a_info["qty"] - b_info["qty"]
             diff_str = f"+{diff}" if diff > 0 else str(diff)
             tags = ()
+            # Both conditions: percentage alone flags 2 vs 1 (1 unit difference); abs diff alone misses proportional gaps on high stock.
             if abs(diff) > max(a_info["qty"], b_info["qty"]) * 0.5 and abs(diff) >= 3:
                 tags = ("imbalanced",)
             self.tree_both.insert("", "end", values=(

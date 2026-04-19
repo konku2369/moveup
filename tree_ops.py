@@ -289,7 +289,7 @@ def sort_tree(
         Shared mutable dict owned by MoveUpGUI._sort_state.
     """
     state = sort_state.setdefault(tree_id, {})
-    ascending = not state.get(col, True)   # first click → ascending
+    ascending = not state.get(col, True)   # first click → descending: default True, NOT True = False (ascending=False → reverse=True)
     state[col] = ascending
 
     rows = [(tree.set(iid, col), iid) for iid in tree.get_children("")]

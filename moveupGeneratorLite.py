@@ -342,6 +342,7 @@ def _prep_table_df(df: pd.DataFrame) -> pd.DataFrame:
     pdf_df["Room"] = pdf_df["Room"].astype(str).fillna("").map(lambda s: _ellipses(s, 8))
     pdf_df["Type"] = pdf_df["Type"].astype(str).fillna("").map(lambda s: _ellipses(s, 8))
     pdf_df["Product Name"] = pdf_df["Product Name"].astype(str).fillna("").map(lambda s: _ellipses(s, 75))
+    # Full METRC tags are 24+ chars and overflow the narrow PDF column — last 6 match what staff read on floor labels.
     pdf_df["Package Barcode"] = pdf_df["Package Barcode"].map(lambda x: str(x)[-6:] if str(x) else "")
     pdf_df = pdf_df[["Type", "Product Name", "Package Barcode", "Room", "Qty On Hand"]]
     return pdf_df

@@ -256,7 +256,7 @@ class AnalyticsWindow:
         else:
             self._render_single_store(t, a_name)
 
-        t.config(state="disabled")
+        t.config(state="disabled")  # tk.Text is editable by default; disable prevents user from corrupting the formatted report
         self.status.set("Analysis complete.")
 
     # ------------------------------------------------------------------

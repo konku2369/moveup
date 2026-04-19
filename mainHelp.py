@@ -260,6 +260,7 @@ class HelpWindow(tk.Toplevel):
 
             # Body text
             try:
+                # Match the Text widget bg to the parent window so it looks like static text, not an input box.
                 bg = self.inner.winfo_toplevel().cget("background")
             except Exception:
                 bg = "#f0f0f0"

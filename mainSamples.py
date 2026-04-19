@@ -953,7 +953,7 @@ class SampleApp(tk.Toplevel):
         if not path:
             return
         self._last_dir = os.path.dirname(path)
-        # Clear the distribution basket — items from the previous file are stale
+        # Clear the distribution basket — previous file's items would silently contaminate a new file's distribution list
         self._dist_basket.clear()
         self._dist_basket_keys.clear()
         self._update_distribution_count()

@@ -129,7 +129,7 @@ class VelocityHistoryManager:
             tmp = self.history_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=1)
-            os.replace(tmp, self.history_path)
+            os.replace(tmp, self.history_path)  # atomic: if write fails, old file is intact
 
             # Backup to ~/.moveup/
             try:

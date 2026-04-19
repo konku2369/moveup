@@ -785,6 +785,7 @@ def load_raw_df(original_file: str, sheet_name: str = "Inventory Adjustments") -
             engine=engine,
         )
     except Exception:
+        # Fallback to sheet index 0 because METRC sheet names vary by state and system version.
         return pd.read_excel(
             original_file, sheet_name=0,
             skiprows=skiprows, dtype=barcode_dtypes,

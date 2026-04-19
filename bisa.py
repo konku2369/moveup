@@ -1192,7 +1192,8 @@ class AsciiDogWidget:
         """Buffer keypresses on Bisa's frame. If the buffer ends with a trick name, she performs it."""
         if not event.char or not event.char.isprintable():
             return
-        self._trick_buffer = (self._trick_buffer + event.char.lower())[-12:]  # keep last 12 chars
+        # [-12:] caps the buffer so typing during normal work can't accidentally accumulate a trigger word over time.
+        self._trick_buffer = (self._trick_buffer + event.char.lower())[-12:]
 
         # Special: "help" opens the command popup (not listed as a trick — keeps secrets safe)
         if self._trick_buffer.endswith("help"):
@@ -1223,6 +1224,9 @@ class AsciiDogWidget:
         """Launch standalone Bisa in a new process."""
         import subprocess
         import sys
+        if getattr(sys, "frozen", False):
+            self.msg_var.set("not available in exe mode \U0001f63f")
+            return
         bisa_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bisa.py")
         subprocess.Popen([sys.executable, bisa_path])
         self.msg_var.set("popped out!! \U0001f680")

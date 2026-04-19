@@ -299,7 +299,7 @@ class TableView(ttk.Frame):
         out = df[columns].copy()
         for col, lim in self._trunc_map.items():
             if col in out.columns:
-                out[col] = out[col].map(lambda v, _lim=lim: truncate_text(v, _lim))
+                out[col] = out[col].map(lambda v, _lim=lim: truncate_text(v, _lim))  # _lim=lim captures loop value; bare `lim` would always use the last iteration's value
         out = out.fillna("")
 
         for idx, row in out.iterrows():
