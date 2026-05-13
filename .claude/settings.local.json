@@ -61,7 +61,8 @@
       "Bash(grep -n \"def.*theme\\\\|apply.*theme\\\\|THEME.*=\" /c/Users/kubic/PycharmProjects/moveup/*.py)",
       "Bash(grep -rh \"^import \\\\|^from \" *.py)",
       "Bash(pip list:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(pip show *)"
     ]
   }
 }

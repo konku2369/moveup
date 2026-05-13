@@ -177,7 +177,9 @@ class ImportHistoryWindow(tk.Toplevel):
     """
 
     def __init__(self, master, import_history_mgr: ImportHistoryManager,
-                 velocity_mgr: VelocityHistoryManager):
+                 velocity_mgr: VelocityHistoryManager,
+                 initial_tab: str = "timeline",
+                 auto_compare_latest: bool = False):
         super().__init__(master)
         self.title(APP_TITLE)
         self.geometry("1200x780")
@@ -191,6 +193,19 @@ class ImportHistoryWindow(tk.Toplevel):
         self._build_ui()
         apply_theme(self, "import_history_theme")
         self._refresh_all()
+
+        # Navigate to requested tab after refresh so data is loaded
+        _tab_map = {
+            "timeline": self.frm_timeline,
+            "trends":   self.frm_trends,
+            "compare":  self.frm_compare,
+        }
+        if initial_tab in _tab_map:
+            self.notebook.select(_tab_map[initial_tab])
+
+        if auto_compare_latest:
+            self._auto_compare_latest()
+
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _on_close(self):
@@ -422,6 +437,10 @@ class ImportHistoryWindow(tk.Toplevel):
         self.combo_b.pack(side="left", padx=(4, 16))
 
         ttk.Button(ctrl, text="Compare", command=self._do_compare).pack(side="left")
+        ttk.Button(
+            ctrl, text="▶ What's New (latest 2)",
+            command=self._auto_compare_latest,
+        ).pack(side="left", padx=(10, 0))
 
         # Summary bar
         self._summary_frame = ttk.Frame(self.frm_compare, padding=(10, 4))
@@ -447,8 +466,8 @@ class ImportHistoryWindow(tk.Toplevel):
         self.frm_qty = ttk.Frame(self._compare_nb)
         self.frm_room = ttk.Frame(self._compare_nb)
 
-        self._compare_nb.add(self.frm_new, text="  New Items  ")
-        self._compare_nb.add(self.frm_removed, text="  Removed  ")
+        self._compare_nb.add(self.frm_new, text="  New SKUs  ")
+        self._compare_nb.add(self.frm_removed, text="  Sold Out  ")
         self._compare_nb.add(self.frm_qty, text="  Qty Changes  ")
         self._compare_nb.add(self.frm_room, text="  Room Moves  ")
 
@@ -486,6 +505,29 @@ class ImportHistoryWindow(tk.Toplevel):
         elif len(items) == 1:
             self.combo_a.current(0)
             self.combo_b.current(0)
+
+    def _auto_compare_latest(self):
+        """Select the two most recent velocity snapshots and run the compare."""
+        snaps = self.velocity_mgr.get_snapshots()
+        if len(snaps) < 2:
+            messagebox.showinfo(
+                "What's New",
+                "Need at least two imports to compare.\n"
+                f"Currently have {len(snaps)} snapshot(s).",
+                parent=self,
+            )
+            return
+        # Switch to compare tab
+        self.notebook.select(self.frm_compare)
+        # Map the last-2 snapshots to their dropdown entries (matched by timestamp)
+        ts_prev = snaps[-2].get("timestamp", "")
+        ts_curr = snaps[-1].get("timestamp", "")
+        for display, ts in self._compare_ts_map.items():
+            if ts == ts_prev:
+                self.combo_a.set(display)
+            if ts == ts_curr:
+                self.combo_b.set(display)
+        self._do_compare()
 
     def _do_compare(self):
         sel_a = self.combo_a.get()
@@ -562,11 +604,16 @@ class ImportHistoryWindow(tk.Toplevel):
 
         # New items (in B, not in A)
         new_items = [
-            {"Barcode": bc, "Room": map_b[bc].get("room", ""), "Qty": map_b[bc].get("qty", 0)}
+            {
+                "Barcode":  bc,
+                "Room":     map_b[bc].get("room", ""),
+                "Qty":      map_b[bc].get("qty", 0),
+                "Received": map_b[bc].get("received_date", ""),
+            }
             for bc in sorted(barcodes_b - barcodes_a)
         ]
 
-        # Removed items (in A, not in B)
+        # Sold out (in A, not in B)
         removed_items = [
             {"Barcode": bc, "Room": map_a[bc].get("room", ""), "Qty": map_a[bc].get("qty", 0)}
             for bc in sorted(barcodes_a - barcodes_b)
@@ -629,7 +676,10 @@ class ImportHistoryWindow(tk.Toplevel):
         # New items
         if result["new_items"]:
             df_new = pd.DataFrame(result["new_items"])
-            self.new_table.render(df_new, ["Barcode", "Room", "Qty"])
+            cols = ["Barcode", "Room", "Qty"]
+            if "Received" in df_new.columns:
+                cols.append("Received")
+            self.new_table.render(df_new, cols)
         else:
             self.new_table.render(pd.DataFrame(), [])
 
@@ -686,12 +736,13 @@ class ImportHistoryWindow(tk.Toplevel):
 # ------------------------------------------------------------------ #
 # Public entry point
 # ------------------------------------------------------------------ #
-def open_import_history_window(parent, import_history_mgr, velocity_mgr):
+def open_import_history_window(
+    parent, import_history_mgr, velocity_mgr,
+    initial_tab: str = "timeline",
+    auto_compare_latest: bool = False,
+):
     """
     Open the Import History window.
-
-    Creates an ``ImportHistoryWindow`` as a child of *parent* and returns it.
-    Called from the main toolbar in ``main.py``.
 
     Parameters
     ----------
@@ -701,11 +752,16 @@ def open_import_history_window(parent, import_history_mgr, velocity_mgr):
         The live manager instance from the main app (already loaded).
     velocity_mgr : VelocityHistoryManager
         The live velocity manager instance (used by the Compare tab).
-
-    Returns
-    -------
-    ImportHistoryWindow
-        The newly created window instance.
+    initial_tab : str
+        Which tab to focus on open: ``"timeline"`` (default), ``"trends"``,
+        or ``"compare"``.
+    auto_compare_latest : bool
+        When True and *initial_tab* is ``"compare"``, automatically runs a
+        diff of the two most recent velocity snapshots ("What's New" mode).
     """
-    win = ImportHistoryWindow(parent, import_history_mgr, velocity_mgr)
+    win = ImportHistoryWindow(
+        parent, import_history_mgr, velocity_mgr,
+        initial_tab=initial_tab,
+        auto_compare_latest=auto_compare_latest,
+    )
     return win

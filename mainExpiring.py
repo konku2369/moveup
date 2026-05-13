@@ -38,7 +38,13 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
 from themes import MOVEUP_THEME, apply_theme
-from data_core import truncate_text
+from data_core import (
+    truncate_text,
+    barcode_tail,
+    PRODUCT_TRUNC_LEN,
+    SUBCATEGORY_TRUNC_LEN,
+    BARCODE_TAIL_LEN,
+)
 
 
 APP_TITLE = "Sweed - Soon To Expire Viewer"
@@ -65,10 +71,11 @@ COL_PATTERNS = {
 DEFAULT_EXCLUSIONS = ["accessory", "accessories"]
 
 # ----------------------------
-# Truncation rules
+# Truncation rules (re-exported from data_core for back-compat with anything
+# that imports them from this module by name)
 # ----------------------------
-TRUNCATE_SUBCATEGORY_TO = 18
-TRUNCATE_PRODUCT_TO = 60
+TRUNCATE_SUBCATEGORY_TO = SUBCATEGORY_TRUNC_LEN
+TRUNCATE_PRODUCT_TO = PRODUCT_TRUNC_LEN
 
 
 def open_file_with_default_app(path: str):
@@ -90,17 +97,8 @@ def open_file_with_default_app(path: str):
 
 
 def metrc_last6(val) -> str:
-    """
-    Return last 6 digits of METRC/tag value.
-    If no digits exist, fall back to last 6 characters.
-    """
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return ""
-    s = str(val).strip()
-    digits = re.sub(r"\D+", "", s)
-    if digits:
-        return digits[-6:]
-    return s[-6:] if len(s) >= 6 else s
+    """Last 6 digits of a METRC tag (delegates to data_core.barcode_tail)."""
+    return barcode_tail(val, n=BARCODE_TAIL_LEN, prefer_digits=True)
 
 
 def first_matching_col(columns, patterns):
@@ -255,11 +253,16 @@ def df_to_pdf(
         if pd.api.types.is_datetime64_any_dtype(out[c]):
             out[c] = out[c].dt.strftime("%Y-%m-%d")
     out = out.fillna("")
-    table_data = [columns] + out.values.tolist()
+
+    # Prepend a sequential # column so rows are easy to call out by number
+    rows = out.values.tolist()
+    numbered_rows = [[str(i + 1)] + r for i, r in enumerate(rows)]
+    full_headers = ["#"] + list(columns)
+    table_data = [full_headers] + numbered_rows
 
     total_width = 742
     base = max(60, int(total_width / max(1, len(columns))))
-    col_widths = []
+    col_widths = [int(base * 0.35)]  # narrow # column
     for c in columns:
         name = str(c).lower()
 
@@ -282,7 +285,7 @@ def df_to_pdf(
     s = sum(col_widths)
     if s > 0:
         scale = total_width / s
-        col_widths = [max(50, int(w * scale)) for w in col_widths]
+        col_widths = [max(30, int(w * scale)) for w in col_widths]
 
     tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
 
@@ -312,10 +315,14 @@ def df_to_pdf(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
 
+    # Center the # column
+    base_style.append(("ALIGN", (0, 0), (0, -1), "CENTER"))
+
     # NEW: center Available Qty column in PDF (header + body)
+    # +1 because we prepended a # column
     qty_idx = _find_available_qty_col_index(columns)
     if qty_idx is not None:
-        base_style.append(("ALIGN", (qty_idx, 0), (qty_idx, -1), "CENTER"))
+        base_style.append(("ALIGN", (qty_idx + 1, 0), (qty_idx + 1, -1), "CENTER"))
 
     tbl.setStyle(TableStyle(base_style))
 
@@ -491,10 +498,10 @@ class DataModel:
             cols_for_ex = [c for c in [self.col_category, self.col_metrc6, self.col_product] if c and c in df.columns]
             if cols_for_ex:
                 blob = df[cols_for_ex].fillna("").astype(str).agg(" | ".join, axis=1).str.lower()
-                ex_mask = pd.Series(False, index=df.index)
-                for k in ex:
-                    ex_mask = ex_mask | blob.str.contains(re.escape(k), na=False)
-                df = df.loc[~ex_mask].copy()
+                # Compile all exclusion keywords into one alternation regex so
+                # we only scan the blob once instead of len(ex) times.
+                pattern = "|".join(re.escape(k) for k in ex)
+                df = df.loc[~blob.str.contains(pattern, na=False, regex=True)].copy()
 
         if location_filter and self.col_location and self.col_location in df.columns:
             df = df[df[self.col_location].isin(location_filter)].copy()
@@ -1015,10 +1022,11 @@ class App(tk.Toplevel):
             self.model.load_file(path)
             self.title(f"{APP_TITLE} — {os.path.basename(path)}")
             self._populate_location_filter()
+            metrc_label = f"'{self.model.col_metrc}'" if self.model.col_metrc else "not found (METRC-6 unavailable)"
             self.info_var.set(
                 f"Loaded {len(self.model.df_raw):,} rows | "
                 f"Expiration: '{self.model.col_exp}' | Product: '{self.model.col_product}' | "
-                f"METRC: '{self.model.col_metrc or 'N/A'}' | "
+                f"METRC: {metrc_label} | "
                 f"Available: '{self.model.col_available or 'N/A'}'"
             )
             self.apply_filter()
@@ -1261,7 +1269,7 @@ class App(tk.Toplevel):
             messagebox.showinfo("Export", "Nothing to export.")
             return
 
-        default_name = f"{title.replace(' ', '_')}_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pdf"
+        default_name = f"{title.replace(' ', '_')}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.pdf"
         path = filedialog.asksaveasfilename(defaultextension=".pdf", initialfile=default_name, filetypes=[("PDF", "*.pdf")])
         if not path:
             return

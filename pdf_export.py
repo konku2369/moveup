@@ -68,9 +68,13 @@ def _auto_open_file(path: str):
 from data_core import (
     COLUMNS_TO_USE,
     TYPE_TRUNC_LEN,
+    BARCODE_TAIL_LEN,
+    METRC_TAIL_LEN_AUDIT,
+    PRODUCT_TRUNC_LEN_PDF,
     ellipses,
     sort_with_backstock_priority,
     sanitize_prefix,
+    barcode_tail,
 )
 
 # ------------------------------
@@ -84,19 +88,25 @@ PDF_PROFILE = {
     "cell_padding_top": 2,
     "cell_padding_bottom": 2,
 
-    "type_trunc": TYPE_TRUNC_LEN,    # max chars for Type column
-    "product_trunc": 75,              # max chars for Product Name
-    "room_trunc": 12,                 # max chars for Room
-    "barcode_tail_moveup": 6,         # show last N digits of barcode in move-up PDF
-    "metrc_tail_audit": 8,            # show last N digits in audit PDF
+    "type_trunc": TYPE_TRUNC_LEN,           # max chars for Type column
+    "product_trunc": PRODUCT_TRUNC_LEN_PDF, # max chars for Product Name
+    "room_trunc": 12,                       # max chars for Room
+    "barcode_tail_moveup": BARCODE_TAIL_LEN,
+    "metrc_tail_audit": METRC_TAIL_LEN_AUDIT,
 
-    # Column widths in points: [Type, Product Name, Barcode, Room, Qty]
-    "moveup_widths": [50, 345, 60, 60, 30],
-    "audit_widths":  [50, 345, 60, 55, 35],
+    # Column widths in points
+    # Move-up: [#, Type, Product, Barcode, Room, Qty] — sums to 545pt
+    "moveup_widths": [25, 50, 320, 60, 60, 30],
+    # Audit:   [#, Type, Product, Barcode, Room/Notes, Qty/Count] — sums to 545pt
+    "audit_widths":  [25, 50, 320, 60, 55, 35],
 }
 
 BASE_PDF_FILENAME = "Print_me_Filtered_Move_Up"
 DATE_FORMAT = "%B %d, %Y — %I:%M %p"
+
+# Fixed page chunk size for audit PDFs. Keeps page numbering deterministic so
+# the end-of-document index can map "items X..Y → page N" exactly.
+AUDIT_ROWS_PER_PAGE = 35
 
 
 # ------------------------------
@@ -111,10 +121,9 @@ _fmt_product = lambda v: _fmt_field(v, "product_trunc")
 _fmt_room    = lambda v: _fmt_field(v, "room_trunc")
 
 
-def _fmt_barcode_tail(val: str, n: int) -> str:
-    """Return the last *n* characters of the barcode string, or the full string if shorter than *n*."""
-    s = "" if val is None else str(val).strip()
-    return s[-n:] if len(s) > n else s
+# Local alias kept for backwards compatibility with existing call sites.
+# Canonical implementation lives in data_core.barcode_tail.
+_fmt_barcode_tail = barcode_tail
 
 
 def _set_alpha(canvas, a: float):
@@ -606,8 +615,14 @@ def _build_moveup_page_elements(
     kawaii_pdf: bool,
     printer_bw: bool,
     prof: Optional[dict] = None,
+    start_item_num: int = 1,
 ):
-    """Build ReportLab flowable elements (title + table) for one page of move-up items."""
+    """Build ReportLab flowable elements (title + table) for one page of move-up items.
+
+    *start_item_num* is the sequential row number assigned to the first row of
+    *df_chunk*. Subsequent rows continue counting upward, so the ``#`` column
+    is globally unique across the whole document.
+    """
     styles = getSampleStyleSheet()
     elements: List = []
 
@@ -618,8 +633,12 @@ def _build_moveup_page_elements(
     elements.append(Paragraph(datetime.now().strftime(DATE_FORMAT), styles["Normal"]))
     elements.append(Paragraph(" ", styles["Normal"]))
 
-    headers = ["Type", "Product", "Barcode", "Location", "Qty"]
-    table_data = [headers] + df_chunk.values.tolist()
+    headers = ["#", "Type", "Product", "Barcode", "Location", "Qty"]
+    rows = df_chunk.values.tolist()
+    numbered_rows = [
+        [str(start_item_num + i)] + row for i, row in enumerate(rows)
+    ]
+    table_data = [headers] + numbered_rows
     table = Table(table_data, colWidths=widths)
 
     if kawaii_pdf:
@@ -636,6 +655,7 @@ def _build_moveup_page_elements(
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), fs),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
         ("GRID", (0, 0), (-1, -1), 0.5, grid),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("BOTTOMPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_bottom"])),
@@ -644,7 +664,7 @@ def _build_moveup_page_elements(
 
     for i in range(1, len(table_data), 2):
         table.setStyle([("BACKGROUND", (0, i), (-1, i), row_a)])
-        if kawaii_pdf and (i + 1) < len(table_data) and row_b is not None:
+        if row_b is not None and (i + 1) < len(table_data):
             table.setStyle([("BACKGROUND", (0, i + 1), (-1, i + 1), row_b)])
 
     elements.append(table)
@@ -662,8 +682,10 @@ def _build_audit_page_elements(
     printer_bw: bool,
     barcode_header: str = "METRC",
     prof: Optional[dict] = None,
+    start_item_num: int = 1,
+    continued: bool = False,
 ):
-    """Build ReportLab flowable elements (title + table) for one audit PDF page group.
+    """Build ReportLab flowable elements (title + table) for one audit PDF page chunk.
 
     Parameters
     ----------
@@ -682,6 +704,11 @@ def _build_audit_page_elements(
         Column header label for the barcode column (``"METRC"`` or ``"Barcode"``).
     prof : dict or None
         Pre-computed kawaii profile dict; None falls back to hardcoded defaults.
+    start_item_num : int
+        Sequential global row number assigned to the first row of this chunk.
+    continued : bool
+        When True appends " (continued)" to the title so staff know they're on
+        the second+ page of the same group.
     """
     styles = getSampleStyleSheet()
     elements: List = []
@@ -689,17 +716,23 @@ def _build_audit_page_elements(
     widths = PDF_PROFILE["audit_widths"]
     fs = int(PDF_PROFILE["font_size"])
 
-    elements.append(Paragraph(f"<b>{title}</b>", styles["Heading2"]))
+    title_text = f"{title} (continued)" if continued else title
+    elements.append(Paragraph(f"<b>{title_text}</b>", styles["Heading2"]))
     elements.append(Paragraph(datetime.now().strftime(DATE_FORMAT), styles["Normal"]))
     elements.append(Paragraph(" ", styles["Normal"]))
 
     headers = (
-        ["Type", "Product", barcode_header, " ", "Qty"]
+        ["#", "Type", "Product", barcode_header, " ", "Qty"]
         if mode == "master"
-        else ["Type", "Product", barcode_header, " ", "Count"]
+        else ["#", "Type", "Product", barcode_header, " ", "Count"]
     )
 
-    table_data = [headers] + df_chunk.values.tolist()
+    # Prepend sequential item numbers to each row
+    rows = df_chunk.values.tolist()
+    numbered_rows = [
+        [str(start_item_num + i)] + row for i, row in enumerate(rows)
+    ]
+    table_data = [headers] + numbered_rows
     table = Table(table_data, colWidths=widths)
 
     if kawaii_pdf:
@@ -715,6 +748,8 @@ def _build_audit_page_elements(
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), fs),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+        # # column centered, Qty/Count right
+        ("ALIGN", (0, 0), (0, -1), "CENTER"),
         ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
         ("GRID", (0, 0), (-1, -1), 0.5, grid),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -722,6 +757,74 @@ def _build_audit_page_elements(
         ("BOTTOMPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_bottom"])),
     ]))
 
+    for i in range(1, len(table_data), 2):
+        table.setStyle([("BACKGROUND", (0, i), (-1, i), row_a)])
+        if kawaii_pdf and row_b and (i + 1) < len(table_data):
+            table.setStyle([("BACKGROUND", (0, i + 1), (-1, i + 1), row_b)])
+
+    elements.append(table)
+    return elements
+
+
+def _build_audit_index_elements(
+    index_entries: List[dict],
+    group_label: str,
+    kawaii_pdf: bool,
+    printer_bw: bool,
+    prof: Optional[dict] = None,
+):
+    """Build the end-of-document index that maps item ranges to page numbers.
+
+    Parameters
+    ----------
+    index_entries : list[dict]
+        Each entry: ``{"group", "items": "A-B", "pages": "N" or "N-M", "count"}``.
+    group_label : str
+        Heading prefix for the group column (e.g. ``"Distributor"``, ``"Brand"``,
+        ``"Type"``) so the index column header matches the body grouping.
+    kawaii_pdf, printer_bw, prof
+        Same styling inputs as the body tables.
+    """
+    styles = getSampleStyleSheet()
+    elements: List = []
+    fs = int(PDF_PROFILE["font_size"])
+
+    elements.append(Paragraph("<b>Index</b>", styles["Heading1"]))
+    elements.append(Paragraph(
+        "Find an item by number — this index lists which page each range of "
+        "items lives on.", styles["Normal"]
+    ))
+    elements.append(Paragraph(" ", styles["Normal"]))
+
+    headers = [group_label, "Items", "Count", "Page(s)"]
+    rows = [
+        [e["group"], e["items"], str(e["count"]), e["pages"]]
+        for e in index_entries
+    ]
+    table_data = [headers] + rows
+    # Wide group column, narrow others
+    widths = [320, 90, 60, 75]
+    table = Table(table_data, colWidths=widths)
+
+    if kawaii_pdf:
+        header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw, prof=prof)
+    else:
+        header_bg = colors.lightgrey
+        row_a = colors.gainsboro
+        row_b = None
+        grid = colors.grey
+
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), header_bg),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), fs),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), 0.5, grid),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_top"])),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), int(PDF_PROFILE["cell_padding_bottom"])),
+    ]))
     for i in range(1, len(table_data), 2):
         table.setStyle([("BACKGROUND", (0, i), (-1, i), row_a)])
         if kawaii_pdf and row_b and (i + 1) < len(table_data):
@@ -776,6 +879,8 @@ def export_moveup_pdf_paginated(
     str
         Absolute path to the written PDF file.
     """
+    items_per_page = max(1, int(items_per_page or 1))
+
     parts = [BASE_PDF_FILENAME]
     if timestamp:
         parts.append(datetime.now().strftime("%Y-%m-%d_%H-%M"))
@@ -821,7 +926,10 @@ def export_moveup_pdf_paginated(
         combined_pdf_df = _prep_moveup_table_df(combined)
         for start in range(0, len(combined_pdf_df), items_per_page):
             chunk = combined_pdf_df.iloc[start:start + items_per_page]
-            elements += _build_moveup_page_elements(chunk, title, kawaii_pdf, printer_bw, prof=prof)
+            elements += _build_moveup_page_elements(
+                chunk, title, kawaii_pdf, printer_bw, prof=prof,
+                start_item_num=start + 1,
+            )
             if start + items_per_page < len(combined_pdf_df):
                 elements.append(PageBreak())
 
@@ -986,35 +1094,89 @@ def export_audit_pdfs(
         if not groups:
             groups = ["(Ungrouped)"]
 
+        item_counter = 0       # sequential row number across the whole PDF
+        current_page = 1       # logical page number we're emitting onto
+        index_entries: List[dict] = []
+
         for gi, gval in enumerate(groups):
             gdf = work[work[group_col].astype(str) == str(gval)].copy()
+            n_rows = len(gdf)
+            if n_rows == 0:
+                continue
 
             qty_or_count = (
                 gdf["Qty On Hand"].astype(int).astype(str).tolist()
                 if mode == "master"
-                else [""] * len(gdf)
+                else [""] * n_rows
             )
 
             audit_table_df = pd.DataFrame({
-                "Type": gdf["TypeDisp"].fillna("").astype(str),
-                "Product": gdf["ProductDisp"].fillna("").astype(str),
-                "METRC": gdf["MetrcLast8"].fillna("").astype(str),
-                "Room / Notes": [""] * len(gdf),
+                "Type": gdf["TypeDisp"].fillna("").astype(str).tolist(),
+                "Product": gdf["ProductDisp"].fillna("").astype(str).tolist(),
+                "METRC": gdf["MetrcLast8"].fillna("").astype(str).tolist(),
+                "Room / Notes": [""] * n_rows,
                 "QtyOrCount": qty_or_count,
             })
 
-            elements += _build_audit_page_elements(
-                df_chunk=audit_table_df,
-                title=f"{group_label}: {gval}",
-                mode=mode,
-                kawaii_pdf=kawaii_pdf,
-                printer_bw=printer_bw,
-                barcode_header=barcode_header,
-                prof=audit_prof,
-            )
+            group_first_item = item_counter + 1
+            group_last_item = item_counter + n_rows
+            group_first_page = current_page
 
+            # Manually chunk into fixed-size pages so page numbers are deterministic.
+            for chunk_idx, start in enumerate(range(0, n_rows, AUDIT_ROWS_PER_PAGE)):
+                chunk = audit_table_df.iloc[start:start + AUDIT_ROWS_PER_PAGE]
+                elements += _build_audit_page_elements(
+                    df_chunk=chunk,
+                    title=f"{group_label}: {gval}",
+                    mode=mode,
+                    kawaii_pdf=kawaii_pdf,
+                    printer_bw=printer_bw,
+                    barcode_header=barcode_header,
+                    prof=audit_prof,
+                    start_item_num=item_counter + 1,
+                    continued=chunk_idx > 0,
+                )
+                item_counter += len(chunk)
+                # Break between chunks in the same group (last chunk gets the
+                # inter-group / pre-index break below).
+                if start + AUDIT_ROWS_PER_PAGE < n_rows:
+                    elements.append(PageBreak())
+                    current_page += 1
+
+            group_last_page = current_page
+
+            pages_str = (
+                str(group_first_page)
+                if group_first_page == group_last_page
+                else f"{group_first_page}-{group_last_page}"
+            )
+            items_str = (
+                str(group_first_item)
+                if group_first_item == group_last_item
+                else f"{group_first_item}-{group_last_item}"
+            )
+            index_entries.append({
+                "group": str(gval),
+                "items": items_str,
+                "count": n_rows,
+                "pages": pages_str,
+            })
+
+            # Inter-group break (also separates the last body page from the index)
             if gi < len(groups) - 1:
                 elements.append(PageBreak())
+                current_page += 1
+
+        # Index at the very end, on its own page(s)
+        if index_entries:
+            elements.append(PageBreak())
+            elements += _build_audit_index_elements(
+                index_entries=index_entries,
+                group_label=group_label,
+                kawaii_pdf=kawaii_pdf,
+                printer_bw=printer_bw,
+                prof=audit_prof,
+            )
 
         doc.build(
             elements,

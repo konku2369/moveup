@@ -54,7 +54,7 @@ import tkinter as tk
 # startup crash if reportlab is missing or pdf_export.py has an error)
 
 # Bisa (ASCII cat companion)
-from bisa import AsciiDogWidget
+from bisa import AsciiCatWidget
 
 # Config persistence
 from config_manager import ConfigManager
@@ -220,6 +220,8 @@ class MoveUpGUI:
         self.page_items_var = IntVar(value=35)               # Items per page in PDF
         self.prefix_var = StringVar(value="")                # Filename prefix for exports
         self.show_advanced_var = BooleanVar(value=False)     # Show/hide advanced toolbar
+        self.velocity_retention_var = IntVar(value=90)       # auto-prune snapshots older than N days; 0 = keep
+        self.watch_folder_var = BooleanVar(value=True)       # poll last_import_dir for new files
 
         # active_columns = user-configurable subset of columns shown in the Move-Up tab.
         # COLUMNS_TO_USE (from data_core) is the full required set for internal logic.
@@ -269,6 +271,16 @@ class MoveUpGUI:
         self.filters_window: Optional[Toplevel] = None  # ref to open filters dialog (prevents dupes)
         self._importing: bool = False  # guard against concurrent imports
 
+        # Quick room-filter chip state (populated by _rebuild_room_chips after each import)
+        self._chip_vars: Dict[str, tk.BooleanVar] = {}
+        self._quick_room_hidden: set = set()
+
+        # --- Folder watcher state (Feature E) ---
+        self._watch_baseline_mtime: float = 0.0  # newest mtime seen at last refresh
+        self._watch_after_id: Optional[str] = None  # tk.after handle for cancelation
+        self._watch_prompt_open: bool = False  # suppress overlapping prompts
+        self._WATCH_INTERVAL_MS: int = 5000  # poll cadence
+
         # --- Bisa companion stats (persisted across sessions) ---
         self._lifetime_pets: int = 0
         self._lifetime_treats: int = 0
@@ -280,6 +292,13 @@ class MoveUpGUI:
         self._prev_inventory_snapshot: Dict[str, str] = {}
 
         self._load_config()
+        # Auto-prune velocity snapshots older than retention window (Feature F)
+        try:
+            self.velocity_mgr.purge_older_than_days(
+                int(self.cfg.get("velocity_retention_days", 90) or 0)
+            )
+        except Exception as e:
+            print(f"[moveup] Warning: velocity prune skipped: {e}")
         self._build_ui()
 
         # Push persisted totals into the widget now that it exists
@@ -298,6 +317,9 @@ class MoveUpGUI:
         self._update_kuntalcount()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_app_close)
+
+        # Start the import-folder watcher (Feature E). Honors watch_folder_var.
+        self._start_folder_watch()
 
     # ------------------------------
     # Config persistence
@@ -332,6 +354,8 @@ class MoveUpGUI:
         self.timestamp_var.set(c["timestamp"])
         self.page_items_var.set(c.get("items_per_page", 35))
         self.prefix_var.set(c["prefix"])
+        self.velocity_retention_var.set(int(c.get("velocity_retention_days", 90) or 0))
+        self.watch_folder_var.set(bool(c.get("watch_import_folder", True)))
 
         # Sets (stored as lists in JSON)
         self.excluded_barcodes         = set(c["excluded_barcodes"])
@@ -382,6 +406,11 @@ class MoveUpGUI:
         c["timestamp"]                = bool(self.timestamp_var.get())
         c["items_per_page"]           = int(self.page_items_var.get() or 30)
         c["prefix"]                   = str(self.prefix_var.get() or "")
+        try:
+            c["velocity_retention_days"] = max(0, int(self.velocity_retention_var.get() or 0))
+        except (TypeError, ValueError):
+            pass
+        c["watch_import_folder"]      = bool(self.watch_folder_var.get())
         c["last_import_dir"]          = self.last_import_dir or ""
         c["current_file_path"]        = self.current_file_path or ""
         c["excluded_barcodes"]        = sorted(list(self.excluded_barcodes))
@@ -415,11 +444,195 @@ class MoveUpGUI:
         window is closed by the OS.  Any exception during ``root.destroy()`` is
         caught and printed so a teardown error never hides the successful save.
         """
+        self._stop_folder_watch()
         self._save_config()
         try:
             self.root.destroy()
         except Exception as e:
             print(f"[moveup] Warning: error during window close: {e}")
+
+    # ------------------------------
+    # Import-folder watcher (Feature E)
+    # ------------------------------
+    _WATCH_EXTS = (".xlsx", ".xls", ".xlsm", ".xlsb", ".csv", ".tsv", ".ods")
+
+    def _scan_watch_dir_newest(self) -> tuple:
+        """Return (path, mtime) of newest supported file in last_import_dir, or (None, 0.0)."""
+        d = self.last_import_dir
+        if not d or not os.path.isdir(d):
+            return (None, 0.0)
+        newest_path: Optional[str] = None
+        newest_mt: float = 0.0
+        try:
+            with os.scandir(d) as it:
+                for entry in it:
+                    if not entry.is_file():
+                        continue
+                    name = entry.name.lower()
+                    if not name.endswith(self._WATCH_EXTS):
+                        continue
+                    if name.startswith("~$"):  # Excel lock files
+                        continue
+                    try:
+                        mt = entry.stat().st_mtime
+                    except OSError:
+                        continue
+                    if mt > newest_mt:
+                        newest_mt = mt
+                        newest_path = entry.path
+        except OSError as e:
+            print(f"[moveup] watch scan failed: {e}")
+        return (newest_path, newest_mt)
+
+    def _refresh_watch_baseline(self) -> None:
+        """Reset the watcher baseline to the current newest mtime (called after manual import)."""
+        _, mt = self._scan_watch_dir_newest()
+        self._watch_baseline_mtime = mt
+
+    def _start_folder_watch(self) -> None:
+        if self._watch_after_id is not None:
+            return
+        if not bool(self.watch_folder_var.get()):
+            return
+        self._refresh_watch_baseline()
+        self._watch_after_id = self.root.after(self._WATCH_INTERVAL_MS, self._poll_import_folder)
+
+    def _stop_folder_watch(self) -> None:
+        if self._watch_after_id is not None:
+            try:
+                self.root.after_cancel(self._watch_after_id)
+            except Exception:
+                pass
+            self._watch_after_id = None
+
+    def _on_watch_toggled(self) -> None:
+        self._save_config()
+        if bool(self.watch_folder_var.get()):
+            self._start_folder_watch()
+        else:
+            self._stop_folder_watch()
+
+    def _poll_import_folder(self) -> None:
+        self._watch_after_id = None
+        try:
+            if (
+                not bool(self.watch_folder_var.get())
+                or self._importing
+                or self._watch_prompt_open
+            ):
+                return
+            newest_path, newest_mt = self._scan_watch_dir_newest()
+            if newest_path and newest_mt > self._watch_baseline_mtime:
+                # Skip the file already loaded (same path → user knows about it)
+                if (
+                    self.current_file_path
+                    and os.path.normcase(os.path.abspath(newest_path))
+                    == os.path.normcase(os.path.abspath(self.current_file_path))
+                ):
+                    self._watch_baseline_mtime = newest_mt
+                else:
+                    self._prompt_load_new_file(newest_path, newest_mt)
+        finally:
+            if bool(self.watch_folder_var.get()):
+                self._watch_after_id = self.root.after(
+                    self._WATCH_INTERVAL_MS, self._poll_import_folder,
+                )
+
+    def _prompt_load_new_file(self, path: str, mtime: float) -> None:
+        self._watch_prompt_open = True
+        try:
+            self._watch_baseline_mtime = mtime  # don't re-prompt for the same file
+            answer = messagebox.askyesno(
+                "New Inventory File Detected",
+                f"A newer file appeared in the import folder:\n\n"
+                f"{os.path.basename(path)}\n\n"
+                f"Load it now?",
+            )
+            if answer:
+                self._load_path_directly(path)
+        finally:
+            self._watch_prompt_open = False
+
+    def _load_path_directly(self, path: str) -> None:
+        """Run the import pipeline for *path* without opening a file dialog."""
+        if self._importing:
+            return
+        self._importing = True
+        if hasattr(self, "btn_import"):
+            self.btn_import.config(state="disabled")
+        try:
+            self.last_import_dir = os.path.dirname(path)
+            self.current_file_path = path
+            self._save_config()
+
+            self.status.set(f"Loading {os.path.basename(path)}…")
+            raw = load_raw_df(path)
+            self.raw_df = raw
+            try:
+                mapped, _used = automap_columns(raw)
+                self.current_df = mapped
+                present = set(self.current_df["Package Barcode"].astype(str).fillna("").str.strip().tolist())
+                self.excluded_barcodes = {bc for bc in self.excluded_barcodes if bc in present}
+                self.kuntal_priority_barcodes = {bc for bc in self.kuntal_priority_barcodes if bc in present}
+                self._update_kuntalcount()
+                self.status.set(f"Loaded {len(mapped)} rows from watched folder.")
+
+                _snap_df = normalize_rooms(mapped.copy(), self.room_alias_map)
+                _sf_set = {"sales floor"} | SALES_FLOOR_ALIASES
+                new_snap: Dict[str, str] = {}
+                if "Package Barcode" in _snap_df.columns and "Room" in _snap_df.columns:
+                    new_snap = {
+                        str(bc).strip(): str(rm).strip().lower()
+                        for bc, rm in zip(
+                            _snap_df["Package Barcode"].astype(str),
+                            _snap_df["Room"].astype(str),
+                        )
+                        if str(bc).strip() and str(bc).strip().lower() != "nan"
+                    }
+                self._prev_inventory_snapshot = new_snap
+                self._save_config()
+
+                import_ts = datetime.now().isoformat()
+                vel_entries = []
+                try:
+                    vel_entries = build_velocity_snapshot_entries(mapped)
+                    if vel_entries:
+                        self.velocity_mgr.add_snapshot(
+                            import_ts, os.path.basename(path), vel_entries,
+                        )
+                except Exception as e:
+                    print(f"[moveup] velocity snapshot save failed: {e}")
+
+                self._update_rowcount(mapped)
+                self._recompute_from_current()
+
+                try:
+                    self.import_history_mgr.add_entry(
+                        timestamp=import_ts,
+                        file_name=os.path.basename(path),
+                        total_rows=len(raw),
+                        mapped_rows=len(mapped),
+                        moveup_count=len(self.moveup_df) if self.moveup_df is not None else 0,
+                        diag={},
+                        unique_brands=mapped["Brand"].nunique() if "Brand" in mapped.columns else 0,
+                        unique_types=mapped["Type"].nunique() if "Type" in mapped.columns else 0,
+                        unique_rooms=mapped["Room"].nunique() if "Room" in mapped.columns else 0,
+                        total_qty=int(mapped["Qty On Hand"].sum()) if "Qty On Hand" in mapped.columns else 0,
+                        velocity_entries_count=len(vel_entries),
+                        bisa_moveups=0,
+                    )
+                except Exception as e:
+                    print(f"[moveup] import history save failed: {e}")
+            except (ValueError, KeyError, TypeError) as e:
+                print(f"[moveup] watched-file auto-mapping failed: {e}")
+                self.status.set(f"Watched file needs manual mapping: {os.path.basename(path)}")
+        except Exception as e:
+            print(f"[moveup] watched-file load failed: {e}")
+            self.status.set(f"Error loading {os.path.basename(path)}: {e}")
+        finally:
+            self._importing = False
+            if hasattr(self, "btn_import"):
+                self.btn_import.config(state="normal")
 
     # ------------------------------
     # Base helpers
@@ -566,6 +779,19 @@ class MoveUpGUI:
         except Exception as e:
             messagebox.showerror("Help", f"Could not open help window:\n\n{e}")
 
+    def open_snapshot_diff_window(self):
+        try:
+            from mainImportHistory import open_import_history_window
+            open_import_history_window(
+                self.root,
+                self.import_history_mgr,
+                self.velocity_mgr,
+                initial_tab="compare",
+                auto_compare_latest=True,
+            )
+        except Exception as e:
+            messagebox.showerror("What's New", f"Could not open window:\n\n{e}")
+
     # ------------------------------
     # UI
     # ------------------------------
@@ -605,41 +831,28 @@ class MoveUpGUI:
         btn_expiring.pack(side="left", padx=4)
         self._register_button(btn_expiring, "Expiring Soon…")
 
-        btn_samples = ttk.Button(
-            btn_row2, text="Sample Manager…", command=self.open_sample_manager,
-        )
-        btn_samples.pack(side="left", padx=4)
-        self._register_button(btn_samples, "Sample Manager…")
+        # Windows ▾ — dropdown menu for all satellite windows
+        self._windows_menu = tk.Menu(self.root, tearoff=0)
+        self._windows_menu.add_command(label="Sample Manager…",  command=self.open_sample_manager)
+        self._windows_menu.add_command(label="Velocity…",         command=self.open_velocity_window)
+        self._windows_menu.add_command(label="Multi-Store…",      command=self.open_multi_store_window)
+        self._windows_menu.add_command(label="Analytics…",        command=self.open_analytics_window)
+        self._windows_menu.add_separator()
+        self._windows_menu.add_command(label="History…",          command=self.open_import_history_window)
+        self._windows_menu.add_command(label="What's New…",       command=self.open_snapshot_diff_window)
+        self._windows_menu.add_separator()
+        self._windows_menu.add_command(label="Help",               command=self.open_help_window)
 
-        btn_velocity = ttk.Button(
-            btn_row2, text="Velocity…", command=self.open_velocity_window,
-        )
-        btn_velocity.pack(side="left", padx=4)
-        self._register_button(btn_velocity, "Velocity…")
+        def _show_windows_menu():
+            btn = self._windows_btn
+            self._windows_menu.post(
+                btn.winfo_rootx(),
+                btn.winfo_rooty() + btn.winfo_height(),
+            )
 
-        btn_multistore = ttk.Button(
-            btn_row2, text="Multi-Store…", command=self.open_multi_store_window,
-        )
-        btn_multistore.pack(side="left", padx=4)
-        self._register_button(btn_multistore, "Multi-Store…")
-
-        btn_analytics = ttk.Button(
-            btn_row2, text="Analytics…", command=self.open_analytics_window,
-        )
-        btn_analytics.pack(side="left", padx=4)
-        self._register_button(btn_analytics, "Analytics…")
-
-        btn_history = ttk.Button(
-            btn_row2, text="History…", command=self.open_import_history_window,
-        )
-        btn_history.pack(side="left", padx=4)
-        self._register_button(btn_history, "History…")
-
-        btn_help = ttk.Button(
-            btn_row2, text="Help", command=self.open_help_window,
-        )
-        btn_help.pack(side="left", padx=4)
-        self._register_button(btn_help, "Help")
+        self._windows_btn = ttk.Button(btn_row2, text="Windows ▾", command=_show_windows_menu)
+        self._windows_btn.pack(side="left", padx=4)
+        self._register_button(self._windows_btn, "Windows ▾")
 
         # Advanced toggle (ANCHOR target for frm_advanced)
         self.frm_adv_toggle = ttk.Frame(frm_controls)
@@ -681,6 +894,21 @@ class MoveUpGUI:
         btn_kawaii_settings_main.pack(side="left", padx=4)
         self._register_button(btn_kawaii_settings_main, "Kawaii PDF Settings…")
 
+        # --- Folder watcher + velocity retention (Features E + F) ---
+        adv_row2 = ttk.Frame(self.frm_advanced)
+        adv_row2.pack(fill="x", pady=(4, 0))
+        ttk.Checkbutton(
+            adv_row2, text="Watch import folder",
+            variable=self.watch_folder_var, command=self._on_watch_toggled,
+        ).pack(side="left", padx=6)
+        ttk.Label(adv_row2, text="Velocity retention (days, 0 = keep):").pack(
+            side="left", padx=(12, 4),
+        )
+        ttk.Spinbox(
+            adv_row2, from_=0, to=3650, width=6,
+            textvariable=self.velocity_retention_var, command=self._save_config,
+        ).pack(side="left")
+
         # Items per page (ANCHOR)
         self.frm_page = ttk.Frame(frm_controls)
         self.frm_page.pack(fill="x", pady=(4, 2))
@@ -690,24 +918,18 @@ class MoveUpGUI:
             textvariable=self.page_items_var, width=6, command=self._save_config,
         ).pack(side="left", padx=6)
 
-        # Status labels
+        # Brief status message (keeps living in the controls panel)
         self.status = StringVar(value="Ready.")
         ttk.Label(frm_controls, textvariable=self.status, anchor="w").pack(fill="x")
 
-        self.rowcount_var = StringVar(value="Items loaded: 0")
-        ttk.Label(frm_controls, textvariable=self.rowcount_var, anchor="w").pack(fill="x")
-
-        self.moveupcount_var = StringVar(value="Move-Up items: 0")
-        ttk.Label(frm_controls, textvariable=self.moveupcount_var, anchor="w").pack(fill="x")
-
-        self.kuntalcount_var = StringVar(value="Priority! items: 0")
-        ttk.Label(frm_controls, textvariable=self.kuntalcount_var, anchor="w").pack(fill="x")
-
+        # Count / filter vars — values are set by methods; displayed in the status bar below.
+        self.rowcount_var      = StringVar(value="Items loaded: 0")
+        self.moveupcount_var   = StringVar(value="Move-Up items: 0")
+        self.kuntalcount_var   = StringVar(value="Priority! items: 0")
         self.filters_summary_var = StringVar(value="Filters: default")
-        ttk.Label(frm_controls, textvariable=self.filters_summary_var, anchor="w", wraplength=480).pack(fill="x")
 
         # ── Right: Bisa — stretch wide, top-aligned ──
-        self.dog_widget = AsciiDogWidget(
+        self.dog_widget = AsciiCatWidget(
             frm_top_row,
             name=self._bisa_name,
             on_rename=self._on_bisa_renamed,
@@ -747,12 +969,35 @@ class MoveUpGUI:
         self.nb.tab(self.tab_excluded, image=self._tab_dot_excluded, compound="left")
         self.nb.tab(self.tab_all,      image=self._tab_dot_all,      compound="left")
 
-        self.tree = ttk.Treeview(self.tab_moveup, columns=tuple(self.active_columns), show="headings", height=18)
+        # ── Room chip bar (quick-filter, populated after each import) ──
+        self._chip_frame = ttk.Frame(self.tab_moveup)
+        self._chip_frame.pack(fill="x", padx=4, pady=(4, 0))
+        self._chip_vars: Dict[str, tk.BooleanVar] = {}
+        self._quick_room_hidden: set = set()
+
+        # ── Move-Up treeview in a wrapper frame (shared with empty-state label) ──
+        frm_tree_wrap = ttk.Frame(self.tab_moveup)
+        frm_tree_wrap.pack(fill="both", expand=True)
+        frm_tree_wrap.rowconfigure(0, weight=1)
+        frm_tree_wrap.columnconfigure(0, weight=1)
+
+        self.tree = ttk.Treeview(frm_tree_wrap, columns=tuple(self.active_columns), show="headings", height=18)
         self._configure_tree_columns(self.tree, self.active_columns)
-        self.tree.pack(fill="both", expand=True)
+        self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", self._on_moveup_double_click)
         self.tree.bind("<ButtonRelease-1>", self._on_moveup_single_click)
         self._bind_tree_context_menu(self.tree, self.active_columns)
+
+        # Empty-state label (same grid cell — lifted above tree when treeview empty)
+        self._empty_label = ttk.Label(
+            frm_tree_wrap,
+            text="Import a file to get started\n(Import File… in the controls above)",
+            font=("TkDefaultFont", 12),
+            foreground="#aaaaaa",
+            anchor="center",
+            justify="center",
+        )
+        self._empty_label.grid(row=0, column=0)
 
         self.k_tree = ttk.Treeview(self.tab_kuntal, columns=tuple(COLUMNS_TO_USE), show="headings", height=18)
         self._configure_tree_columns(self.k_tree, COLUMNS_TO_USE)
@@ -820,7 +1065,61 @@ class MoveUpGUI:
         ttk.Label(
             self.root, textvariable=self.diag_var,
             anchor="w", foreground="#555",
-        ).pack(fill="x", padx=10, pady=(0, 6))
+        ).pack(fill="x", padx=10, pady=(0, 2))
+
+        # ==============================
+        # STATUS BAR — fixed bottom strip
+        # ==============================
+        frm_statusbar = tk.Frame(self.root, relief="sunken", bd=1, bg="#e8e8e8")
+        frm_statusbar.pack(fill="x", side="bottom", pady=0)
+
+        # File indicator
+        self._sb_file_var = StringVar(value="No file loaded")
+        tk.Label(
+            frm_statusbar, textvariable=self._sb_file_var,
+            bg="#e8e8e8", fg="#444", anchor="w", padx=8, pady=2,
+            font=("TkDefaultFont", 8),
+        ).pack(side="left")
+
+        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+
+        # Loaded count
+        self._sb_loaded_var = StringVar(value="Loaded: 0")
+        tk.Label(
+            frm_statusbar, textvariable=self._sb_loaded_var,
+            bg="#e8e8e8", fg="#555", anchor="w", padx=6, pady=2,
+            font=("TkDefaultFont", 8),
+        ).pack(side="left")
+
+        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+
+        # Move-Up count (blue)
+        self._sb_moveup_var = StringVar(value="Move-Up: 0")
+        tk.Label(
+            frm_statusbar, textvariable=self._sb_moveup_var,
+            bg="#e8e8e8", fg="#2272b0", anchor="w", padx=6, pady=2,
+            font=("TkDefaultFont", 8, "bold"),
+        ).pack(side="left")
+
+        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+
+        # Priority count (amber)
+        self._sb_priority_var = StringVar(value="Priority!: 0")
+        tk.Label(
+            frm_statusbar, textvariable=self._sb_priority_var,
+            bg="#e8e8e8", fg="#b07800", anchor="w", padx=6, pady=2,
+            font=("TkDefaultFont", 8, "bold"),
+        ).pack(side="left")
+
+        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+
+        # Filters summary (right-aligned)
+        self._sb_filters_var = StringVar(value="Filters: default")
+        tk.Label(
+            frm_statusbar, textvariable=self._sb_filters_var,
+            bg="#e8e8e8", fg="#666", anchor="e", padx=8, pady=2,
+            font=("TkDefaultFont", 8),
+        ).pack(side="right")
 
 
 
@@ -845,13 +1144,30 @@ class MoveUpGUI:
     # ------------------------------
     # Status counters
     # ------------------------------
+    def _update_statusbar(self):
+        """Refresh the bottom status bar badges from current state."""
+        if not hasattr(self, "_sb_file_var"):
+            return
+        fname = os.path.basename(self.current_file_path) if self.current_file_path else "No file loaded"
+        self._sb_file_var.set(fname)
+        loaded = 0 if self.current_df is None else len(self.current_df)
+        moveup = 0 if self.moveup_df is None else len(self.moveup_df)
+        priority = len(self.kuntal_priority_barcodes)
+        self._sb_loaded_var.set(f"Loaded: {loaded}")
+        self._sb_moveup_var.set(f"Move-Up: {moveup}")
+        self._sb_priority_var.set(f"Priority!: {priority}")
+        filt = self.filters_summary_var.get()
+        self._sb_filters_var.set(filt)
+
     def _update_rowcount(self, df: Optional[pd.DataFrame]):
         n = 0 if df is None else len(df)
         self.rowcount_var.set(f"Items loaded: {n}")
+        self._update_statusbar()
 
     def _update_moveupcount(self, df: Optional[pd.DataFrame]):
         n = 0 if df is None else len(df)
         self.moveupcount_var.set(f"Move-Up items: {n}")
+        self._update_statusbar()
         try:
             self.nb.tab(self.tab_moveup, text=f"Move-Up ({n})")
         except Exception as e:
@@ -860,6 +1176,7 @@ class MoveUpGUI:
     def _update_kuntalcount(self):
         n = len(self.kuntal_priority_barcodes)
         self.kuntalcount_var.set(f"Priority! items: {n}")
+        self._update_statusbar()
         try:
             self.nb.tab(self.tab_kuntal, text=f"Priority! ({n})")
         except Exception as e:
@@ -1091,6 +1408,7 @@ class MoveUpGUI:
                 except Exception as e:
                     print(f"[moveup] import history save failed: {e}")
 
+                self._refresh_watch_baseline()
                 return
 
             except (ValueError, KeyError, TypeError) as e:
@@ -1109,9 +1427,22 @@ class MoveUpGUI:
                     self.map_columns_dialog(force=True)
                 return
 
+        except FileNotFoundError as e:
+            messagebox.showerror("Import Error", f"File not found:\n{path}\n\n{e}")
+            self.status.set(f"Error: file not found ({os.path.basename(path)})")
+        except PermissionError as e:
+            messagebox.showerror(
+                "Import Error",
+                f"Cannot read file (it may be open in Excel):\n{path}\n\n{e}",
+            )
+            self.status.set(f"Error: permission denied ({os.path.basename(path)})")
         except Exception as e:
-            messagebox.showerror("Error", str(e))
-            self.status.set(f"Error: {e}")
+            messagebox.showerror(
+                "Import Error",
+                f"Failed to import:\n{os.path.basename(path)}\n\n"
+                f"{type(e).__name__}: {e}",
+            )
+            self.status.set(f"Error: {type(e).__name__}: {e}")
         finally:
             self._importing = False
             if hasattr(self, "btn_import"):
@@ -1210,12 +1541,47 @@ class MoveUpGUI:
             self._sort_state, self._sort_tree,
         )
 
+    def _rebuild_room_chips(self, df: Optional[pd.DataFrame]) -> None:
+        """Rebuild the quick-filter chip bar from unique rooms in *df*."""
+        for w in self._chip_frame.winfo_children():
+            w.destroy()
+        self._chip_vars.clear()
+        if df is None or "Room" not in df.columns:
+            return
+        rooms = sorted(df["Room"].dropna().astype(str).str.strip().unique().tolist())
+        if not rooms:
+            return
+        ttk.Label(self._chip_frame, text="Rooms:").pack(side="left", padx=(0, 4))
+        for room in rooms:
+            var = tk.BooleanVar(value=room not in self._quick_room_hidden)
+            self._chip_vars[room] = var
+            ttk.Checkbutton(
+                self._chip_frame, text=room, variable=var,
+                command=self._on_chip_toggle,
+            ).pack(side="left", padx=2)
+
+    def _on_chip_toggle(self) -> None:
+        self._quick_room_hidden = {
+            room for room, var in self._chip_vars.items() if not var.get()
+        }
+        if self.moveup_df is not None:
+            self._render_tree(self.moveup_df)
+
     def _render_tree(self, df: pd.DataFrame):
+        # Apply quick room-chip filter (display-only, doesn't rerun pipeline)
+        if self._quick_room_hidden and df is not None and "Room" in df.columns:
+            df = df[~df["Room"].astype(str).str.strip().isin(self._quick_room_hidden)]
         render_moveup_tree(
             self.tree, df, self._display_cols_for(df),
             self.kuntal_priority_barcodes, self.excluded_barcodes,
             self.hide_removed_var.get(),
         )
+        # Empty-state: lift placeholder when treeview has no visible rows
+        if hasattr(self, "_empty_label"):
+            if not self.tree.get_children():
+                self._empty_label.lift()
+            else:
+                self._empty_label.lower()
 
     def _render_kuntal_tree(self, df: pd.DataFrame):
         render_kuntal_tree(self.k_tree, df, self._display_cols_for(df))
@@ -1720,6 +2086,9 @@ class MoveUpGUI:
         # Rebuild all treeview column sets in case Received Date appeared/disappeared
         self._refresh_treeview_columns(df)
 
+        # Rebuild room chips from the full current data (not move_up_df — we want all rooms)
+        self._rebuild_room_chips(df)
+
         self._render_tree(move_up_df)
         self._update_moveupcount(move_up_df)
 
@@ -1750,6 +2119,7 @@ class MoveUpGUI:
             f"Filters — Rooms: {len(rooms)} | Brands: {'ALL' if b == 0 else b} | Types: {'ALL' if t == 0 else t} | "
             f"Skip SF: {'Yes' if self.skip_sales_floor_var.get() else 'No'}"
         )
+        self._update_statusbar()
 
     # ------------------------------
     # Exports

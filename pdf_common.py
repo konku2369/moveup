@@ -360,6 +360,7 @@ def build_section_pdf(
     footer: bool = True,
     width_overrides: Optional[Dict[str, float]] = None,
     extra_style_fn=None,
+    add_row_numbers: bool = True,
 ) -> str:
     """
     Build a multi-section table PDF.
@@ -426,16 +427,31 @@ def build_section_pdf(
             story.append(Paragraph("No data.", styles["Normal"]))
             continue
 
-        table_data = [list(columns)] + [list(row) for row in data_rows]
+        # Optionally prepend a sequential # column. Renumbering restarts per
+        # section, because sections in this codebase are independent groupings
+        # (e.g. "By Brand" / "By Type") rather than one continuous list.
+        if add_row_numbers:
+            eff_columns = ["#"] + list(columns)
+            eff_rows = [[str(i + 1)] + list(row) for i, row in enumerate(data_rows)]
+            eff_overrides = dict(width_overrides or {})
+            eff_overrides.setdefault("#", 0.35)  # narrow numeric column
+        else:
+            eff_columns = list(columns)
+            eff_rows = [list(row) for row in data_rows]
+            eff_overrides = width_overrides
+
+        table_data = [eff_columns] + eff_rows
 
         col_widths = compute_column_widths(
-            columns, total_width=total_width, overrides=width_overrides,
+            eff_columns, total_width=total_width, overrides=eff_overrides,
         )
 
         # Auto-alignment + caller extras
-        extra = auto_align_commands(columns)
+        extra = auto_align_commands(eff_columns)
+        if add_row_numbers:
+            extra.append(("ALIGN", (0, 0), (0, -1), "CENTER"))
         if extra_style_fn:
-            extra.extend(extra_style_fn(columns, table_data))
+            extra.extend(extra_style_fn(eff_columns, table_data))
 
         style = build_table_style(pal, len(table_data), extra_commands=extra)
 

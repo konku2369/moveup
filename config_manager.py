@@ -73,6 +73,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "bisa_name":                "Bisa",
     "catnip_redeemed":          0,
     "prev_inventory_snapshot":  {},
+    "velocity_retention_days":  90,    # auto-prune snapshots older than this; 0 = keep forever
+    "watch_import_folder":      True,  # poll last_import_dir for new files
 }
 
 
@@ -351,7 +353,7 @@ class ConfigManager:
         # Booleans
         for key in (
             "printer_bw", "skip_sales_floor", "hide_removed",
-            "auto_open_pdf", "timestamp",
+            "auto_open_pdf", "timestamp", "watch_import_folder",
         ):
             if key in raw:
                 d[key] = bool(raw[key])
@@ -379,6 +381,13 @@ class ConfigManager:
         try:
             d["items_per_page"] = int(
                 raw.get("items_per_page", d["items_per_page"])
+            )
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            d["velocity_retention_days"] = max(
+                0, int(raw.get("velocity_retention_days", d["velocity_retention_days"]))
             )
         except (TypeError, ValueError):
             pass

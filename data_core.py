@@ -78,6 +78,20 @@ AUDIT_OPTIONAL_FIELDS = ["Distributor", "Store", "Size", "Received Date", "Whole
 # to keep the UI columns compact.
 TYPE_TRUNC_LEN = 7
 
+# Truncation lengths shared across mainExpiring.py and pdf_export.py so the
+# GUI display, CSV/Excel export, and PDF table all show the same widths.
+PRODUCT_TRUNC_LEN = 60
+SUBCATEGORY_TRUNC_LEN = 18
+PRODUCT_TRUNC_LEN_PDF = 75  # PDF tables can fit slightly more
+
+# Number of barcode digits shown in compact contexts (sticker tail, METRC-6 column).
+BARCODE_TAIL_LEN = 6
+METRC_TAIL_LEN_AUDIT = 8
+
+# Sweed-style barcodes are 24+ chars; anything shorter than this with no product
+# name is treated as a junk/summary row during import cleanup.
+MIN_METRC_LENGTH = 16
+
 # Fuzzy name candidates for auto-mapping imported columns to internal names.
 # Different POS systems (Sweed, Dutchie, etc.) use different column names for
 # the same data. This dict maps our internal name → list of names we've seen
@@ -296,7 +310,12 @@ def _read_csv_smart(path: str, skiprows: int) -> pd.DataFrame:
 
     try:
         return _attempt("utf-8")
-    except Exception:
+    except (UnicodeDecodeError, UnicodeError) as e:
+        # Some POS exports are saved in legacy single-byte encodings. Latin-1 will
+        # always succeed, but high-bit characters may be misinterpreted (e.g. 'é'
+        # could become a different glyph). Surface this loudly so the user knows
+        # to check non-ASCII product names if anything looks wrong.
+        print(f"[moveup] CSV not valid UTF-8 ({e}); retrying as latin-1 — non-ASCII characters may be misread")
         return _attempt("latin-1")
 
 
@@ -354,6 +373,30 @@ def ellipses(s: str, n: int) -> str:
     if n < 4:
         return s[:n]
     return s[: n - 3] + "..."
+
+
+def barcode_tail(val, n: int = BARCODE_TAIL_LEN, prefer_digits: bool = False) -> str:
+    """Return the last *n* characters of a barcode/METRC tag.
+
+    When *prefer_digits* is True, only digits are considered (e.g. for the
+    METRC-6 column in the Expiring viewer where staff scan the printed digit
+    tail). When False, take the raw last n chars (used by PDF sticker tails).
+    Handles None / NaN gracefully.
+    """
+    if val is None:
+        return ""
+    try:
+        import math
+        if isinstance(val, float) and math.isnan(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    if prefer_digits:
+        digits = re.sub(r"\D+", "", s)
+        if digits:
+            return digits[-n:]
+    return s[-n:] if len(s) > n else s
 
 
 def truncate_text(val, max_len: int) -> str:
@@ -456,7 +499,7 @@ def _looks_like_metrc_barcode(val) -> bool:
       - Mostly alphanumeric (allows a few dashes/spaces)
     """
     s = str(val).strip()
-    if len(s) < 16:
+    if len(s) < MIN_METRC_LENGTH:
         return False
     clean = re.sub(r"[\s\-]", "", s)
     if not clean.isalnum():
@@ -922,6 +965,13 @@ def compute_moveup_from_df(
 # Higher threshold = more lenient (more imports before flagging as slow).
 VELOCITY_SLOW_THRESHOLD_DEFAULT = 3
 
+# Velocity score weighting (room movement vs qty movement) and the threshold
+# above which an item is labelled "Fast". Real cannabis retail data shows room
+# changes are rare, so qty change carries 70% of the signal.
+VELOCITY_QTY_WEIGHT = 0.7
+VELOCITY_ROOM_WEIGHT = 0.3
+VELOCITY_FAST_THRESHOLD = 0.25
+
 VELOCITY_LABELS = {
     "new": "New",
     "fast": "Fast",
@@ -1113,13 +1163,16 @@ def compute_velocity_metrics(
             max_possible_changes = max(n_snapshots - 1, 1)
             room_score = min(room_changes / max_possible_changes, 1.0)
             qty_score = min(abs(qty_delta) / max(abs(first_qty), 1), 1.0)
-            velocity_score = round(room_score * 0.3 + qty_score * 0.7, 3)
+            velocity_score = round(
+                room_score * VELOCITY_ROOM_WEIGHT + qty_score * VELOCITY_QTY_WEIGHT,
+                3,
+            )
 
             if qty_unchanged_streak >= slow_threshold * 2:
                 velocity_label = "Stale"
             elif qty_unchanged_streak >= slow_threshold:
                 velocity_label = "Slow"
-            elif velocity_score >= 0.25:
+            elif velocity_score >= VELOCITY_FAST_THRESHOLD:
                 velocity_label = "Fast"
             else:
                 velocity_label = "Moderate"

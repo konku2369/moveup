@@ -31,7 +31,10 @@ import pandas as pd
 from reportlab.lib import colors
 from pdf_common import build_section_pdf, PALETTE_KAWAII, PALETTE_PLAIN
 
-from data_core import load_raw_df, automap_columns, normalize_rooms, ellipses, truncate_text
+from data_core import (
+    load_raw_df, automap_columns, normalize_rooms, ellipses, truncate_text,
+    barcode_tail, BARCODE_TAIL_LEN,
+)
 from themes import MOVEUP_THEME, apply_theme
 
 
@@ -88,17 +91,8 @@ def open_file_with_default_app(path: str):
 
 
 def metrc_last6(val) -> str:
-    """
-    Return last 6 digits of METRC/tag value.
-    If no digits exist, fall back to last 6 characters.
-    """
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return ""
-    s = str(val).strip()
-    digits = re.sub(r"\D+", "", s)
-    if digits:
-        return digits[-6:]
-    return s[-6:] if len(s) >= 6 else s
+    """Last 6 digits of a METRC tag (delegates to data_core.barcode_tail)."""
+    return barcode_tail(val, n=BARCODE_TAIL_LEN, prefer_digits=True)
 
 
 def first_matching_col(columns, patterns):
@@ -128,11 +122,16 @@ def _fmt_currency(val) -> str:
 # ----------------------------
 
 def _sample_total_row_style(columns, table_data):
-    """Extra TableStyle: bold + tinted background for TOTAL rows."""
+    """Extra TableStyle: bold + tinted background for TOTAL rows.
+
+    Detects the label column by scanning the last row for any cell whose text
+    starts with "TOTAL" — robust whether or not pdf_common.build_section_pdf
+    prepended a "#" row-number column.
+    """
     cmds = []
     if len(table_data) > 1:
-        last_row = table_data[-1]
-        if last_row and str(last_row[0]).upper().startswith("TOTAL"):
+        last_row = table_data[-1] or []
+        if any(str(cell).upper().startswith("TOTAL") for cell in last_row):
             last_idx = len(table_data) - 1
             cmds.append(("FONTNAME", (0, last_idx), (-1, last_idx), "Helvetica-Bold"))
             cmds.append(("BACKGROUND", (0, last_idx), (-1, last_idx), colors.Color(0.92, 0.90, 0.96)))

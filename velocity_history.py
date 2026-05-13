@@ -34,12 +34,17 @@ PERSISTENCE:
 import json
 import os
 import sys
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 
 VELOCITY_FILENAME = "velocity_history.json"
 VELOCITY_BACKUP_FILENAME = "velocity_history_backup.json"
 BACKUP_DIR_NAME = ".moveup"
+
+# Default retention window for snapshots. Anything older than this is pruned
+# automatically when the manager is loaded. 0 disables pruning entirely.
+DEFAULT_RETENTION_DAYS = 90
 
 
 def _determine_app_dir() -> str:
@@ -203,6 +208,22 @@ class VelocityHistoryManager:
         removed = before - len(self.snapshots)
         if removed:
             self.save()
+        return removed
+
+    def purge_older_than_days(self, days: int) -> int:
+        """Remove snapshots older than *days* (relative to now); 0 = disabled.
+
+        Convenience wrapper around ``purge_before`` that computes the cutoff
+        timestamp from a day count. Negative values are treated as 0.
+
+        Returns the number of snapshots removed.
+        """
+        if not days or days <= 0:
+            return 0
+        cutoff_dt = datetime.now() - timedelta(days=int(days))
+        removed = self.purge_before(cutoff_dt.isoformat())
+        if removed:
+            print(f"[moveup] Velocity history: pruned {removed} snapshot(s) older than {days} days")
         return removed
 
     def purge_all(self) -> int:

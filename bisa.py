@@ -11,7 +11,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import simpledialog
 
-class AsciiDogWidget:
+class AsciiCatWidget:
     """
     Animated ASCII cat companion widget — Bisa (she/her).
 
@@ -1893,3 +1893,8 @@ if __name__ == "__main__":
     root.protocol("WM_DELETE_WINDOW", _on_close)
 
     root.mainloop()
+
+
+# Backwards-compat alias: original class was named AsciiDogWidget before the
+# project clarified Bisa is a cat. Existing imports keep working.
+AsciiDogWidget = AsciiCatWidget
