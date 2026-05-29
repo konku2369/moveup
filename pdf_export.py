@@ -48,8 +48,16 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.lib.colors import Color
 from kawaii_settings import load_settings, compute_effective_profile
+import pdf_common
 import random
 import subprocess
+
+# W-Y palette constants for move-up/audit tables (mirrors PALETTE_WY in pdf_common)
+_WY_HEADER_BG   = Color(0.08, 0.08, 0.08)
+_WY_HEADER_TEXT = Color(0.91, 0.63, 0.13)
+_WY_ROW_A       = Color(1.0,  1.0,  1.0)
+_WY_ROW_B       = Color(0.96, 0.95, 0.93)
+_WY_GRID        = Color(0.35, 0.27, 0.05)
 
 
 def _auto_open_file(path: str):
@@ -643,15 +651,17 @@ def _build_moveup_page_elements(
 
     if kawaii_pdf:
         header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw, prof=prof)
+        header_text = colors.black
+    elif pdf_common.get_pdf_theme() == "wy":
+        header_bg, header_text = _WY_HEADER_BG, _WY_HEADER_TEXT
+        row_a, row_b, grid = _WY_ROW_A, _WY_ROW_B, _WY_GRID
     else:
-        header_bg = colors.lightgrey
-        row_a = colors.gainsboro
-        row_b = None
-        grid = colors.grey
+        header_bg, header_text = colors.lightgrey, colors.black
+        row_a, row_b, grid = colors.gainsboro, None, colors.grey
 
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), header_bg),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("TEXTCOLOR", (0, 0), (-1, 0), header_text),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), fs),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
@@ -737,14 +747,17 @@ def _build_audit_page_elements(
 
     if kawaii_pdf:
         header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw, prof=prof)
+        header_text = colors.black
+    elif pdf_common.get_pdf_theme() == "wy":
+        header_bg, header_text = _WY_HEADER_BG, _WY_HEADER_TEXT
+        row_a, row_b, grid = _WY_ROW_A, _WY_ROW_B, _WY_GRID
     else:
-        header_bg = colors.lightgrey
-        row_a = colors.gainsboro
-        row_b = None
-        grid = colors.grey
+        header_bg, header_text = colors.lightgrey, colors.black
+        row_a, row_b, grid = colors.gainsboro, None, colors.grey
 
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), header_bg),
+        ("TEXTCOLOR", (0, 0), (-1, 0), header_text),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), fs),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
@@ -759,7 +772,7 @@ def _build_audit_page_elements(
 
     for i in range(1, len(table_data), 2):
         table.setStyle([("BACKGROUND", (0, i), (-1, i), row_a)])
-        if kawaii_pdf and row_b and (i + 1) < len(table_data):
+        if row_b is not None and (i + 1) < len(table_data):
             table.setStyle([("BACKGROUND", (0, i + 1), (-1, i + 1), row_b)])
 
     elements.append(table)
@@ -808,14 +821,17 @@ def _build_audit_index_elements(
 
     if kawaii_pdf:
         header_bg, row_a, row_b, grid = _table_style_kawaii(printer_bw, prof=prof)
+        header_text = colors.black
+    elif pdf_common.get_pdf_theme() == "wy":
+        header_bg, header_text = _WY_HEADER_BG, _WY_HEADER_TEXT
+        row_a, row_b, grid = _WY_ROW_A, _WY_ROW_B, _WY_GRID
     else:
-        header_bg = colors.lightgrey
-        row_a = colors.gainsboro
-        row_b = None
-        grid = colors.grey
+        header_bg, header_text = colors.lightgrey, colors.black
+        row_a, row_b, grid = colors.gainsboro, None, colors.grey
 
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), header_bg),
+        ("TEXTCOLOR", (0, 0), (-1, 0), header_text),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), fs),
         ("ALIGN", (0, 0), (0, -1), "LEFT"),
@@ -827,7 +843,7 @@ def _build_audit_index_elements(
     ]))
     for i in range(1, len(table_data), 2):
         table.setStyle([("BACKGROUND", (0, i), (-1, i), row_a)])
-        if kawaii_pdf and row_b and (i + 1) < len(table_data):
+        if row_b is not None and (i + 1) < len(table_data):
             table.setStyle([("BACKGROUND", (0, i + 1), (-1, i + 1), row_b)])
 
     elements.append(table)

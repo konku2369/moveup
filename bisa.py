@@ -642,32 +642,36 @@ class AsciiCatWidget:
         self.frame.bind("<Button-1>", lambda e: (self.frame.focus_set(), self._on_frame_click(e)))
 
         self.msg_var = tk.StringVar(value="...")
-        tk.Label(
+        self._msg_label = tk.Label(
             self.frame,
             textvariable=self.msg_var,
             font=("Segoe UI", 9),
             bg=self._theme_bg,
             fg=self._theme_msg,
-        ).pack()
+        )
+        self._msg_label.pack()
 
-        tk.Frame(self.frame, bg=self._theme_border, height=1).pack(fill="x", pady=4)
+        self._sep_frame = tk.Frame(self.frame, bg=self._theme_border, height=1)
+        self._sep_frame.pack(fill="x", pady=4)
 
-        tk.Label(
+        self._hint_label = tk.Label(
             self.frame,
             text="click \u2192 pet  |  dbl-click \u2192 boop  |  right-click \u2192 belly rub  |  dbl-click name \u2192 rename",
             font=("Segoe UI", 8),
             bg=self._theme_bg,
             fg=self._theme_hint,
-        ).pack(pady=(0, 2))
+        )
+        self._hint_label.pack(pady=(0, 2))
 
         self.stats_var = tk.StringVar(value="pets:0  treats:0")
-        tk.Label(
+        self._stats_label = tk.Label(
             self.frame,
             textvariable=self.stats_var,
             font=("Segoe UI", 8),
             bg=self._theme_bg,
             fg=self._theme_stats,
-        ).pack()
+        )
+        self._stats_label.pack()
 
         self.catnip_var = tk.StringVar(value="")
         self._catnip_label = tk.Label(
@@ -739,6 +743,34 @@ class AsciiCatWidget:
             self._theme_hint = "#8aa9d6"
             self._theme_stats = "#c7d9f2"
             self._seasonal_idle_frames = self.WINTER_FRAMES
+
+    def set_app_theme(self, mode: str):
+        """Recolor all widgets for 'kawaii' (seasonal default) or 'wy' (Weyland-Yutani) mode."""
+        if mode == "wy":
+            self._theme_bg     = "#0e0e0e"
+            self._theme_border = "#2a2a2a"
+            self._theme_accent = "#e8a020"
+            self._theme_msg    = "#ffb347"
+            self._theme_hint   = "#555555"
+            self._theme_stats  = "#444444"
+        else:
+            self._apply_seasonal_theme(datetime.now())
+
+        bg, border, accent, msg, hint, stats = (
+            self._theme_bg, self._theme_border, self._theme_accent,
+            self._theme_msg, self._theme_hint, self._theme_stats,
+        )
+        self.frame.configure(bg=bg, highlightbackground=border)
+        self._title_label.configure(bg=bg, foreground=accent)
+        self.dog_label.configure(bg=bg, fg=accent)
+        self._msg_label.configure(bg=bg, fg=msg)
+        self._sep_frame.configure(bg=border)
+        self._hint_label.configure(bg=bg, fg=hint)
+        self._stats_label.configure(bg=bg, fg=stats)
+        catnip_fg = "#4ab870" if mode == "wy" else "#2d8a4e"
+        self._catnip_label.configure(bg=bg, fg=catnip_fg)
+        self._random_trick_label.configure(bg=bg, fg=accent)
+        self._help_label.configure(bg=bg, fg=hint)
 
     # ------------------------------
     # Core rendering

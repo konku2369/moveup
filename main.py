@@ -168,6 +168,36 @@ def export_excel(
 
 
 
+# Per-theme color tokens for non-ttk widgets (status bar, empty label, etc.)
+_THEME_COLORS = {
+    "kawaii": {
+        "sb_bg":          "#e8e8e8",
+        "sb_sep":         "#bbb",
+        "sb_file_fg":     "#444",
+        "sb_loaded_fg":   "#555",
+        "sb_moveup_fg":   "#2272b0",
+        "sb_priority_fg": "#b07800",
+        "sb_filters_fg":  "#666",
+        "empty_fg":       "#aaaaaa",
+        "diag_fg":        "#555",
+        "count_fg":       "#555",
+        "root_bg":        "#ede8f7",
+    },
+    "wy": {
+        "sb_bg":          "#0e0e0e",
+        "sb_sep":         "#2a2a2a",
+        "sb_file_fg":     "#e8a020",
+        "sb_loaded_fg":   "#888888",
+        "sb_moveup_fg":   "#ffb347",
+        "sb_priority_fg": "#cc4400",
+        "sb_filters_fg":  "#666666",
+        "empty_fg":       "#e8a020",
+        "diag_fg":        "#888888",
+        "count_fg":       "#888888",
+        "root_bg":        "#0c0c0c",
+    },
+}
+
 # GUI
 # ------------------------------
 class MoveUpGUI:
@@ -230,7 +260,9 @@ class MoveUpGUI:
         self._sort_state: Dict[str, Dict[str, bool]] = {}  # per-tree sort direction state
 
         self._button_registry = []  # tracks buttons for kawaii label toggling
+        self._theme_mode = "kawaii"  # updated by _load_config before _apply_theme_mode
         self._create_kawaii_theme()
+        self._create_wy_theme()
 
         self.cfg = ConfigManager(tk_root=self.root)
         self.app_dir = self.cfg.app_dir
@@ -312,9 +344,9 @@ class MoveUpGUI:
         self.dog_widget.greet_startup()
 
         self._bind_window_treat()
-        self._apply_kawaii_theme(initial=True)
-        self._refresh_button_labels()
+        self._apply_theme_mode(self._theme_mode, save=False)
         self._update_kuntalcount()
+        self._on_any_tree_select()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_app_close)
 
@@ -380,6 +412,9 @@ class MoveUpGUI:
         # Inventory snapshot
         self._prev_inventory_snapshot = c["prev_inventory_snapshot"]
 
+        # Theme
+        self._theme_mode = c.get("theme_mode", "kawaii")
+
     def _save_config(self):
         """
         Collect current GUI state into ``ConfigManager`` and persist to disk.
@@ -422,6 +457,7 @@ class MoveUpGUI:
         c["bisa_name"]                = bs.get("name", self._bisa_name)
         c["catnip_redeemed"]          = bs.get("catnip_redeemed", self._catnip_redeemed)
         c["prev_inventory_snapshot"]  = self._prev_inventory_snapshot
+        c["theme_mode"]               = getattr(self, "_theme_mode", "kawaii")
 
         c.save()
 
@@ -706,13 +742,164 @@ class MoveUpGUI:
         self._button_registry.append((btn, base_text))
 
     def _refresh_button_labels(self):
-        for btn, base in self._button_registry:
-            btn.config(text=f"🌼 {base} 🌼")
+        if getattr(self, "_theme_mode", "kawaii") == "wy":
+            for btn, base in self._button_registry:
+                btn.config(text=base.upper())
+        else:
+            for btn, base in self._button_registry:
+                btn.config(text=f"🌼 {base} 🌼")
 
     def _apply_kawaii_theme(self, initial: bool = False):
-        self.style.theme_use("kawaii_daisy")
-        self.root.title(self.base_title + " 🌼🌼🌼")
-        self._refresh_button_labels()
+        self._apply_theme_mode("kawaii", save=False)
+
+    def _create_wy_theme(self):
+        if "wy_terminal" in self.style.theme_names():
+            return
+        self.style.theme_create("wy_terminal", parent="clam", settings={
+            "TFrame":     {"configure": {"background": "#141414"}},
+            "TLabelframe": {
+                "configure": {"background": "#141414", "bordercolor": "#2a2a2a", "relief": "groove"},
+            },
+            "TLabelframe.Label": {
+                "configure": {"background": "#141414", "foreground": "#e8a020",
+                               "font": ("Consolas", 9, "bold")},
+            },
+            "TLabel": {
+                "configure": {"background": "#141414", "foreground": "#e8a020",
+                               "font": ("Consolas", 9)},
+            },
+            "TButton": {
+                "configure": {
+                    "padding": 6, "relief": "flat",
+                    "background": "#1c1c1c", "foreground": "#e8a020",
+                    "bordercolor": "#3a3a3a", "borderwidth": 1,
+                    "font": ("Consolas", 9),
+                },
+                "map": {
+                    "background": [("active", "#2a2200"), ("pressed", "#3a3000"), ("disabled", "#111111")],
+                    "foreground": [("active", "#ffb347"), ("disabled", "#444444")],
+                },
+            },
+            "Treeview": {
+                "configure": {
+                    "background": "#0e0e0e", "fieldbackground": "#0e0e0e",
+                    "foreground": "#e8a020", "rowheight": 20,
+                    "bordercolor": "#2a2a2a",
+                    "font": ("Consolas", 9),
+                },
+                "map": {
+                    "background": [("selected", "#2a1a00")],
+                    "foreground": [("selected", "#ffb347")],
+                },
+            },
+            "Treeview.Heading": {
+                "configure": {
+                    "background": "#1c1c1c", "foreground": "#ffb347",
+                    "relief": "flat", "bordercolor": "#2a2a2a",
+                    "font": ("Consolas", 9, "bold"),
+                },
+                "map": {"background": [("active", "#2a2a00")]},
+            },
+            "TCheckbutton": {
+                "configure": {"background": "#141414", "foreground": "#e8a020",
+                               "font": ("Consolas", 9)},
+                "map": {"background": [("active", "#1c1c1c")]},
+            },
+            "TEntry": {
+                "configure": {
+                    "fieldbackground": "#0e0e0e", "foreground": "#e8a020",
+                    "insertcolor": "#e8a020", "bordercolor": "#3a3a3a",
+                    "font": ("Consolas", 9),
+                },
+            },
+            "TSpinbox": {
+                "configure": {
+                    "fieldbackground": "#0e0e0e", "foreground": "#e8a020",
+                    "insertcolor": "#e8a020", "bordercolor": "#3a3a3a",
+                    "arrowcolor": "#e8a020",
+                    "font": ("Consolas", 9),
+                },
+            },
+            "TCombobox": {
+                "configure": {
+                    "fieldbackground": "#0e0e0e", "foreground": "#e8a020",
+                    "bordercolor": "#3a3a3a",
+                    "font": ("Consolas", 9),
+                },
+                "map": {"fieldbackground": [("readonly", "#141414")]},
+            },
+            "TNotebook": {
+                "configure": {"background": "#141414", "tabmargins": [2, 4, 2, 0]},
+            },
+            "TNotebook.Tab": {
+                "configure": {
+                    "background": "#1c1c1c", "foreground": "#888888",
+                    "padding": [10, 4],
+                    "font": ("Consolas", 9),
+                },
+                "map": {
+                    "background": [("selected", "#141414"), ("active", "#2a2200")],
+                    "foreground": [("selected", "#ffb347"), ("active", "#e8a020")],
+                    "expand": [("selected", [2, 3, 2, 0])],
+                },
+            },
+            "TSeparator": {"configure": {"background": "#2a2a2a"}},
+            "Vertical.TScrollbar": {
+                "configure": {
+                    "background": "#1c1c1c", "troughcolor": "#0e0e0e",
+                    "bordercolor": "#2a2a2a", "arrowcolor": "#e8a020",
+                },
+            },
+            "Horizontal.TScrollbar": {
+                "configure": {
+                    "background": "#1c1c1c", "troughcolor": "#0e0e0e",
+                    "bordercolor": "#2a2a2a", "arrowcolor": "#e8a020",
+                },
+            },
+        })
+
+    def _apply_theme_mode(self, mode: str, save: bool = True):
+        self._theme_mode = mode
+        c = _THEME_COLORS[mode]
+        import pdf_common as _pc; _pc.set_pdf_theme(mode)
+        if mode == "kawaii":
+            self.style.theme_use("kawaii_daisy")
+            self.root.title(self.base_title + " 🌼🌼🌼")
+            for btn, base in self._button_registry:
+                btn.config(text=f"🌼 {base} 🌼")
+        else:
+            self.style.theme_use("wy_terminal")
+            self.root.title("▌ W-Y TERMINAL  " + self.base_title)
+            for btn, base in self._button_registry:
+                btn.config(text=base.upper())
+        self.root.configure(bg=c["root_bg"])
+        self._recolor_manual_widgets(c)
+        if hasattr(self, "_theme_btn"):
+            self._theme_btn.config(text="▌ W-Y" if mode == "kawaii" else "🌸 KAWAII")
+        if hasattr(self, "dog_widget"):
+            try:
+                self.dog_widget.set_app_theme(mode)
+            except Exception:
+                pass
+        if save:
+            self._save_config()
+
+    def _recolor_manual_widgets(self, c: dict):
+        if hasattr(self, "_frm_statusbar"):
+            self._frm_statusbar.configure(bg=c["sb_bg"])
+        for lbl, key in getattr(self, "_sb_label_map", []):
+            lbl.configure(bg=c["sb_bg"], fg=c[key])
+        for sep in getattr(self, "_sb_seps", []):
+            sep.configure(bg=c["sb_sep"])
+        if hasattr(self, "_empty_label"):
+            self._empty_label.configure(foreground=c["empty_fg"])
+        if hasattr(self, "_diag_label"):
+            self._diag_label.configure(foreground=c["diag_fg"])
+        if hasattr(self, "_all_count_label"):
+            self._all_count_label.configure(foreground=c["count_fg"])
+
+    def _toggle_theme(self):
+        self._apply_theme_mode("wy" if self._theme_mode == "kawaii" else "kawaii")
 
     def open_kawaii_settings(self):
         try:
@@ -853,6 +1040,10 @@ class MoveUpGUI:
         self._windows_btn = ttk.Button(btn_row2, text="Windows ▾", command=_show_windows_menu)
         self._windows_btn.pack(side="left", padx=4)
         self._register_button(self._windows_btn, "Windows ▾")
+
+        # Theme toggle — not in _button_registry, managed by _apply_theme_mode
+        self._theme_btn = ttk.Button(btn_row2, text="▌ W-Y", command=self._toggle_theme)
+        self._theme_btn.pack(side="left", padx=4)
 
         # Advanced toggle (ANCHOR target for frm_advanced)
         self.frm_adv_toggle = ttk.Frame(frm_controls)
@@ -1018,7 +1209,8 @@ class MoveUpGUI:
         ttk.Entry(frm_all_top, textvariable=self.all_search_var, width=40).pack(side="left", padx=6)
         ttk.Button(frm_all_top, text="Clear", command=lambda: self.all_search_var.set("")).pack(side="left")
         self.all_items_count_var = StringVar(value="")
-        ttk.Label(frm_all_top, textvariable=self.all_items_count_var, foreground="#555").pack(side="left", padx=12)
+        self._all_count_label = ttk.Label(frm_all_top, textvariable=self.all_items_count_var, foreground="#555")
+        self._all_count_label.pack(side="left", padx=12)
 
         all_frm = ttk.Frame(self.tab_all)
         all_frm.pack(fill="both", expand=True)
@@ -1033,93 +1225,132 @@ class MoveUpGUI:
 
         self.all_search_var.trace_add("write", lambda *_: self._render_all_tree(self.current_df))
 
+        # Context-sensitive row-action zone: show buttons only while a tree row is selected.
+        for _t in (self.tree, self.k_tree, self.x_tree, self.all_tree):
+            _t.bind("<<TreeviewSelect>>", self._on_any_tree_select, add="+")
+        self.nb.bind("<<NotebookTabChanged>>", self._on_any_tree_select, add="+")
+
         # ==============================
         # BOTTOM: action buttons + diag
+        # Split into two zones:
+        #   - frm_remove_sel   : per-row actions (only visible while a row is selected)
+        #   - frm_remove_always: list-level actions (always visible)
         # ==============================
         frm_remove = ttk.Frame(self.root, padding=(10, 4, 10, 4))
         frm_remove.pack(fill="x")
+        self._frm_remove = frm_remove
 
-        btn_toggle = ttk.Button(frm_remove, text="Toggle Remove", command=self._toggle_remove_selected)
+        # --- Selection-dependent zone (left) ---
+        self._frm_remove_sel = ttk.Frame(frm_remove)
+        # Packed/unpacked on tree selection. Start hidden.
+
+        btn_toggle = ttk.Button(self._frm_remove_sel, text="Toggle Remove", command=self._toggle_remove_selected)
         btn_toggle.pack(side="left", padx=4)
         self._register_button(btn_toggle, "Toggle Remove")
 
-        btn_clear = ttk.Button(frm_remove, text="Clear Removed", command=self._clear_removed)
-        btn_clear.pack(side="left", padx=4)
-        self._register_button(btn_clear, "Clear Removed")
-
-        ttk.Separator(frm_remove, orient="vertical").pack(side="left", fill="y", padx=8)
-
-        btn_kuntal = ttk.Button(frm_remove, text="Toggle Priority!", command=self._toggle_kuntal_selected)
+        btn_kuntal = ttk.Button(self._frm_remove_sel, text="Toggle Priority!", command=self._toggle_kuntal_selected)
         btn_kuntal.pack(side="left", padx=4)
         self._register_button(btn_kuntal, "Toggle Priority!")
 
-        btn_manual = ttk.Button(frm_remove, text="Manual Add…", command=self._manual_add_dialog)
+        # Hint label shown when nothing is selected
+        self._sel_hint_label = ttk.Label(
+            frm_remove,
+            text="Select an item to see row actions",
+            foreground="#888",
+        )
+        self._sel_hint_label.pack(side="left", padx=4)
+
+        # --- Always-visible list-level zone (right) ---
+        self._frm_remove_always = ttk.Frame(frm_remove)
+        self._frm_remove_always.pack(side="right")
+
+        btn_clear = ttk.Button(self._frm_remove_always, text="Clear Removed", command=self._clear_removed)
+        btn_clear.pack(side="left", padx=4)
+        self._register_button(btn_clear, "Clear Removed")
+
+        btn_manual = ttk.Button(self._frm_remove_always, text="Manual Add…", command=self._manual_add_dialog)
         btn_manual.pack(side="left", padx=4)
         self._register_button(btn_manual, "Manual Add…")
 
-        btn_clear_k = ttk.Button(frm_remove, text="Clear Priority! List", command=self._clear_kuntal_list)
+        btn_clear_k = ttk.Button(self._frm_remove_always, text="Clear Priority! List", command=self._clear_kuntal_list)
         btn_clear_k.pack(side="left", padx=4)
         self._register_button(btn_clear_k, "Clear Priority! List")
 
         self.diag_var = StringVar(value="")
-        ttk.Label(
+        self._diag_label = ttk.Label(
             self.root, textvariable=self.diag_var,
             anchor="w", foreground="#555",
-        ).pack(fill="x", padx=10, pady=(0, 2))
+        )
+        self._diag_label.pack(fill="x", padx=10, pady=(0, 2))
 
         # ==============================
         # STATUS BAR — fixed bottom strip
         # ==============================
-        frm_statusbar = tk.Frame(self.root, relief="sunken", bd=1, bg="#e8e8e8")
-        frm_statusbar.pack(fill="x", side="bottom", pady=0)
+        _sbc = _THEME_COLORS["kawaii"]
+        self._frm_statusbar = tk.Frame(self.root, relief="sunken", bd=1, bg=_sbc["sb_bg"])
+        self._frm_statusbar.pack(fill="x", side="bottom", pady=0)
 
-        # File indicator
         self._sb_file_var = StringVar(value="No file loaded")
-        tk.Label(
-            frm_statusbar, textvariable=self._sb_file_var,
-            bg="#e8e8e8", fg="#444", anchor="w", padx=8, pady=2,
+        _sb_file_lbl = tk.Label(
+            self._frm_statusbar, textvariable=self._sb_file_var,
+            bg=_sbc["sb_bg"], fg=_sbc["sb_file_fg"], anchor="w", padx=8, pady=2,
             font=("TkDefaultFont", 8),
-        ).pack(side="left")
+        )
+        _sb_file_lbl.pack(side="left")
 
-        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+        _sep1 = tk.Frame(self._frm_statusbar, bg=_sbc["sb_sep"], width=1)
+        _sep1.pack(side="left", fill="y", padx=4, pady=2)
 
-        # Loaded count
         self._sb_loaded_var = StringVar(value="Loaded: 0")
-        tk.Label(
-            frm_statusbar, textvariable=self._sb_loaded_var,
-            bg="#e8e8e8", fg="#555", anchor="w", padx=6, pady=2,
+        _sb_loaded_lbl = tk.Label(
+            self._frm_statusbar, textvariable=self._sb_loaded_var,
+            bg=_sbc["sb_bg"], fg=_sbc["sb_loaded_fg"], anchor="w", padx=6, pady=2,
             font=("TkDefaultFont", 8),
-        ).pack(side="left")
+        )
+        _sb_loaded_lbl.pack(side="left")
 
-        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+        _sep2 = tk.Frame(self._frm_statusbar, bg=_sbc["sb_sep"], width=1)
+        _sep2.pack(side="left", fill="y", padx=4, pady=2)
 
-        # Move-Up count (blue)
         self._sb_moveup_var = StringVar(value="Move-Up: 0")
-        tk.Label(
-            frm_statusbar, textvariable=self._sb_moveup_var,
-            bg="#e8e8e8", fg="#2272b0", anchor="w", padx=6, pady=2,
+        _sb_moveup_lbl = tk.Label(
+            self._frm_statusbar, textvariable=self._sb_moveup_var,
+            bg=_sbc["sb_bg"], fg=_sbc["sb_moveup_fg"], anchor="w", padx=6, pady=2,
             font=("TkDefaultFont", 8, "bold"),
-        ).pack(side="left")
+        )
+        _sb_moveup_lbl.pack(side="left")
 
-        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+        _sep3 = tk.Frame(self._frm_statusbar, bg=_sbc["sb_sep"], width=1)
+        _sep3.pack(side="left", fill="y", padx=4, pady=2)
 
-        # Priority count (amber)
         self._sb_priority_var = StringVar(value="Priority!: 0")
-        tk.Label(
-            frm_statusbar, textvariable=self._sb_priority_var,
-            bg="#e8e8e8", fg="#b07800", anchor="w", padx=6, pady=2,
+        _sb_priority_lbl = tk.Label(
+            self._frm_statusbar, textvariable=self._sb_priority_var,
+            bg=_sbc["sb_bg"], fg=_sbc["sb_priority_fg"], anchor="w", padx=6, pady=2,
             font=("TkDefaultFont", 8, "bold"),
-        ).pack(side="left")
+        )
+        _sb_priority_lbl.pack(side="left")
 
-        tk.Frame(frm_statusbar, bg="#bbb", width=1).pack(side="left", fill="y", padx=4, pady=2)
+        _sep4 = tk.Frame(self._frm_statusbar, bg=_sbc["sb_sep"], width=1)
+        _sep4.pack(side="left", fill="y", padx=4, pady=2)
 
-        # Filters summary (right-aligned)
         self._sb_filters_var = StringVar(value="Filters: default")
-        tk.Label(
-            frm_statusbar, textvariable=self._sb_filters_var,
-            bg="#e8e8e8", fg="#666", anchor="e", padx=8, pady=2,
+        _sb_filters_lbl = tk.Label(
+            self._frm_statusbar, textvariable=self._sb_filters_var,
+            bg=_sbc["sb_bg"], fg=_sbc["sb_filters_fg"], anchor="e", padx=8, pady=2,
             font=("TkDefaultFont", 8),
-        ).pack(side="right")
+        )
+        _sb_filters_lbl.pack(side="right")
+
+        # Store refs for theme switching
+        self._sb_label_map = [
+            (_sb_file_lbl,     "sb_file_fg"),
+            (_sb_loaded_lbl,   "sb_loaded_fg"),
+            (_sb_moveup_lbl,   "sb_moveup_fg"),
+            (_sb_priority_lbl, "sb_priority_fg"),
+            (_sb_filters_lbl,  "sb_filters_fg"),
+        ]
+        self._sb_seps = [_sep1, _sep2, _sep3, _sep4]
 
 
 
@@ -1195,6 +1426,36 @@ class MoveUpGUI:
             self.nb.tab(self.tab_all, text=f"All Items ({n})")
         except Exception as e:
             print(f"[moveup] tab count update failed: {e}")
+
+    # ------------------------------
+    # Context-sensitive bottom action bar
+    # ------------------------------
+    def _on_any_tree_select(self, _event=None):
+        """Show row-action buttons only while a row is selected in any tree."""
+        if not hasattr(self, "_frm_remove_sel"):
+            return
+        any_selected = False
+        for _t in (
+            getattr(self, "tree", None),
+            getattr(self, "k_tree", None),
+            getattr(self, "x_tree", None),
+            getattr(self, "all_tree", None),
+        ):
+            try:
+                if _t is not None and _t.selection():
+                    any_selected = True
+                    break
+            except Exception:
+                continue
+        try:
+            if any_selected:
+                self._sel_hint_label.pack_forget()
+                self._frm_remove_sel.pack(side="left")
+            else:
+                self._frm_remove_sel.pack_forget()
+                self._sel_hint_label.pack(side="left", padx=4)
+        except Exception as e:
+            print(f"[moveup] selection visibility toggle failed: {e}")
 
     # ------------------------------
     # Window-wide treat throwing
@@ -2171,7 +2432,7 @@ class MoveUpGUI:
                 prefix=self.prefix_var.get() or None,
                 auto_open=self.auto_open_var.get(),
                 items_per_page=int(self.page_items_var.get() or 30),
-                kawaii_pdf=True,
+                kawaii_pdf=self._theme_mode != "wy",
                 printer_bw=bool(self.printer_bw_var.get()),
             )
             self.status.set(f"PDF saved: {os.path.basename(p)}")

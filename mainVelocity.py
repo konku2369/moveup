@@ -49,7 +49,7 @@ import pandas as pd
 
 # PDF
 from reportlab.lib import colors
-from pdf_common import build_section_pdf, PALETTE_KAWAII, PALETTE_PLAIN
+from pdf_common import build_section_pdf, PALETTE_KAWAII, PALETTE_PLAIN, get_active_palette
 
 from data_core import (
     COLUMNS_TO_USE,
@@ -179,7 +179,7 @@ def _velocity_pdf_export(
         If ``True``, uses ``PALETTE_KAWAII`` (pink/purple tints); otherwise
         ``PALETTE_PLAIN`` (neutral grey).
     """
-    palette = PALETTE_KAWAII if kawaii_pdf else PALETTE_PLAIN
+    palette = get_active_palette(kawaii_pdf)
 
     # Convert (section_title, df, columns) → (section_title, columns, data_rows)
     converted = []

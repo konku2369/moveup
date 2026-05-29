@@ -75,6 +75,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "prev_inventory_snapshot":  {},
     "velocity_retention_days":  90,    # auto-prune snapshots older than this; 0 = keep forever
     "watch_import_folder":      True,  # poll last_import_dir for new files
+    "theme_mode":               "kawaii",  # 'kawaii' | 'wy'
 }
 
 
@@ -415,6 +416,11 @@ class ConfigManager:
             except (TypeError, ValueError):
                 pass
         d["bisa_name"] = str(raw.get("bisa_name", "Bisa")) or "Bisa"
+
+        # Theme mode
+        _tm = raw.get("theme_mode", d["theme_mode"])
+        if _tm in ("kawaii", "wy"):
+            d["theme_mode"] = _tm
 
         # Inventory snapshot
         snap = raw.get("prev_inventory_snapshot", {})

@@ -47,6 +47,7 @@ from tkinter import (
     Listbox, MULTIPLE, END,
 )
 
+import pdf_common
 from data_core import (
     COLUMNS_TO_USE,
     AUDIT_OPTIONAL_FIELDS,
@@ -1017,7 +1018,7 @@ def open_audit_window(
                 base_dir=export_run_dir,
                 title_text=title_var.get().strip() or "Inventory Audit",
                 sort_mode=sort_mode_var.get(),
-                kawaii_pdf=True,
+                kawaii_pdf=pdf_common.get_pdf_theme() != "wy",
                 printer_bw=printer_bw,
                 auto_open=auto_open,
                 default_store=default_store_var.get().strip() or "Store",

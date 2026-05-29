@@ -38,6 +38,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 
 from themes import MOVEUP_THEME, apply_theme
+import pdf_common
 from data_core import (
     truncate_text,
     barcode_tail,
@@ -290,21 +291,29 @@ def df_to_pdf(
     tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
 
     if kawaii_pdf:
-        header_bg = colors.Color(0.96, 0.90, 0.95)
+        header_bg   = colors.Color(0.96, 0.90, 0.95)
+        header_text = colors.black
         row_a = colors.Color(0.995, 0.965, 0.985)
         row_b = colors.Color(0.98, 0.92, 0.96)
-        grid = colors.Color(0.72, 0.68, 0.74)
+        grid  = colors.Color(0.72, 0.68, 0.74)
+    elif pdf_common.get_pdf_theme() == "wy":
+        header_bg   = colors.Color(0.08, 0.08, 0.08)
+        header_text = colors.Color(0.91, 0.63, 0.13)
+        row_a = colors.Color(1.0,  1.0,  1.0)
+        row_b = colors.Color(0.96, 0.95, 0.93)
+        grid  = colors.Color(0.35, 0.27, 0.05)
     else:
-        header_bg = colors.lightgrey
+        header_bg   = colors.lightgrey
+        header_text = colors.black
         row_a = colors.whitesmoke
         row_b = colors.white
-        grid = colors.grey
+        grid  = colors.grey
 
     base_style = [
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("BACKGROUND", (0, 0), (-1, 0), header_bg),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("TEXTCOLOR", (0, 0), (-1, 0), header_text),
 
         ("FONTSIZE", (0, 1), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.25, grid),
@@ -1294,7 +1303,7 @@ class App(tk.Toplevel):
                 subtitle=subtitle,
                 df=df,
                 columns=pdf_cols,
-                kawaii_pdf=bool(self.pdf_kawaii_var.get()),
+                kawaii_pdf=bool(self.pdf_kawaii_var.get()) and pdf_common.get_pdf_theme() != "wy",
                 product_col=self.model.col_product,
                 metrc6_col=self.model.col_metrc6,
             )

@@ -29,7 +29,7 @@ import pandas as pd
 
 # PDF
 from reportlab.lib import colors
-from pdf_common import build_section_pdf, PALETTE_KAWAII, PALETTE_PLAIN
+from pdf_common import build_section_pdf, PALETTE_KAWAII, PALETTE_PLAIN, get_active_palette
 
 from data_core import (
     load_raw_df, automap_columns, normalize_rooms, ellipses, truncate_text,
@@ -148,7 +148,7 @@ def _sample_pdf_export(
     """Export one or more tables to a single landscape PDF via pdf_common."""
     import pandas as _pd
 
-    palette = PALETTE_KAWAII if kawaii_pdf else PALETTE_PLAIN
+    palette = get_active_palette(kawaii_pdf)
 
     # Convert (section_title, df, columns) → (section_title, columns, data_rows)
     converted = []

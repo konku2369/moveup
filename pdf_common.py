@@ -61,6 +61,40 @@ PALETTE_PLAIN = {
     "text":   colors.black,
 }
 
+# Weyland-Yutani: dark header bar + amber header text, white data rows — minimal ink use.
+PALETTE_WY = {
+    "header":      Color(0.08, 0.08, 0.08),   # near-black header bg
+    "header_text": Color(0.91, 0.63, 0.13),   # amber header text
+    "row_a":       Color(1.0,  1.0,  1.0),    # white rows
+    "row_b":       Color(0.96, 0.95, 0.93),   # barely-warm light grey rows
+    "grid":        Color(0.35, 0.27, 0.05),   # dark amber grid lines
+    "text":        colors.black,              # body text — max readability on white
+}
+
+
+# ---------------------------------------------------------------------------
+# Active PDF theme — controlled by set_pdf_theme(); read by all export modules
+# ---------------------------------------------------------------------------
+_PDF_THEME: str = "kawaii"
+
+
+def set_pdf_theme(mode: str) -> None:
+    """Set the active PDF color theme ('kawaii' or 'wy'). Called by main.py on toggle."""
+    global _PDF_THEME
+    _PDF_THEME = mode
+
+
+def get_pdf_theme() -> str:
+    """Return the active PDF theme name."""
+    return _PDF_THEME
+
+
+def get_active_palette(kawaii_pdf: bool = False) -> dict:
+    """Return the appropriate palette dict for the current app theme and kawaii flag."""
+    if _PDF_THEME == "wy":
+        return PALETTE_WY
+    return PALETTE_KAWAII if kawaii_pdf else PALETTE_PLAIN
+
 
 # ---------------------------------------------------------------------------
 # Text helpers
@@ -230,7 +264,7 @@ def build_table_style(
         ("FONTNAME",       (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE",       (0, 0), (-1, 0), header_font_size),
         ("BACKGROUND",     (0, 0), (-1, 0), palette["header"]),
-        ("TEXTCOLOR",      (0, 0), (-1, 0), palette.get("text", colors.black)),
+        ("TEXTCOLOR",      (0, 0), (-1, 0), palette.get("header_text", palette.get("text", colors.black))),
 
         # Body rows
         ("FONTSIZE",       (0, 1), (-1, -1), body_font_size),
